@@ -14,13 +14,13 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import aliased
 from starlette.datastructures import UploadFile
 
-from app import config, db, parse
+from app import config, db, evaluate, parse
 from app.importer.mapping import FIELDS
 from app.importer.normalize import looks_like_name
 from app.importer.pipeline import documents, load_table, new_batch, start_import
 from app.jobs import enqueue
 from app.llm import LLMError, get_llm
-from app.models import Candidate, Duplicate, ImportBatch, Job
+from app.models import Candidate, Duplicate, ImportBatch, Job, Match, Vacancy
 from app.search import Filters, search
 from app.web import present
 
@@ -35,6 +35,7 @@ templates.env.filters["stale_label"] = present.stale_label
 templates.env.globals["PARSE_STATUS"] = present.PARSE_STATUS
 templates.env.globals["problem_summary"] = present.problem_summary
 templates.env.globals["remaining"] = present.remaining
+templates.env.globals["plural"] = present.plural
 templates.env.globals["RELOCATION"] = parse.RELOCATION
 templates.env.globals["EDITABLE"] = parse.EDITABLE
 POSITION_RE = re.compile(r"^(?:желаемая\s+)?должность\s*:\s*(.+)$", re.IGNORECASE)
@@ -437,14 +438,28 @@ def candidates(
 
 
 @router.get("/candidates/{candidate_id}", response_class=HTMLResponse)
-def candidate(request: Request, candidate_id: int):
+def candidate(request: Request, candidate_id: int, v: int | None = None):
+    """Карточка кандидата; `v` — вакансия, чьи доводы подсветить в резюме
+    («Показать в резюме»): строки каждого довода получают якорь e-<требование>."""
     with db.SessionLocal() as s:
         c = s.get(Candidate, candidate_id)
         if not c:
             raise HTTPException(404)
         main = s.get(Candidate, c.duplicate_of) if c.duplicate_of else None
         merged = list(s.scalars(select(Candidate).where(Candidate.duplicate_of == c.id)))
-    source, anchors = present.marked_source(c)
+        history = s.execute(
+            select(Match, Vacancy)
+            .join(Vacancy, Vacancy.id == Match.vacancy_id)
+            .where(Match.candidate_id == c.id)
+            .order_by(Match.evaluated_at.desc())
+        ).all()
+        shown = next((m for m, vac in history if vac.id == v), None)
+    extra = [
+        (f"e-{ch['requirement_id']}", ch["evidence_lines"])
+        for ch in (shown.checks if shown else [])
+        if ch.get("evidence_lines")
+    ]
+    source, anchors = present.marked_source(c, extra)
     return render(
         request,
         "candidate.html",
@@ -454,6 +469,9 @@ def candidate(request: Request, candidate_id: int):
         merged=merged,
         source=source,
         anchors=anchors,
+        history=[(m, vac, evaluate.category(m)) for m, vac in history],
+        shown=shown,
+        CATEGORIES=evaluate.CATEGORIES,
     )
 
 
@@ -549,7 +567,7 @@ def settings_check(request: Request):
     return _settings_page(request, f"Подключение работает: ответ за {seconds:.1f} с.")
 
 
-STUBS = {"/vacancies": "Вакансии", "/morning": "Утро"}
+STUBS = {"/morning": "Утро"}
 
 
 def _stub(title: str):

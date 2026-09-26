@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app import db, embed, jobs
 from app.web.routes import router
+from app.web.vacancies import router as vacancies_router
 
 STATIC = Path(__file__).parent / "static"
 
@@ -35,6 +36,7 @@ def create_app(data_dir: Path | str | None = None) -> FastAPI:
     app = FastAPI(title="Кадровый агент", lifespan=lifespan)
     app.mount("/static", StaticFiles(directory=STATIC), name="static")
     app.include_router(router)
+    app.include_router(vacancies_router)
     return app
 
 

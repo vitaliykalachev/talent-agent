@@ -104,6 +104,13 @@ def line_span(text: str, lines: list[int]) -> tuple[int, int]:
     return starts[lines[0] - 1], starts[lines[1]] - 1
 
 
+def stale_note(c: Candidate) -> str:
+    """Пометка устаревшего резюме в результатах по вакансии (раздел 7 плана)."""
+    if c.resume_date:
+        return f"Резюме от {short_date(c.resume_date)} — старше полутора лет, уточните на созвоне"
+    return "Дата резюме не указана — уточните на созвоне, актуально ли оно"
+
+
 def marked_source(c: Candidate, extra: list[tuple[str, list[int]]] = ()) -> tuple[Markup, set[str]]:
     """Исходник с метками <mark id> на строках и цитатах, на которых основаны поля слева;
     `extra` — ещё строки для подсветки (довод оценки по ссылке «Показать в резюме»)."""

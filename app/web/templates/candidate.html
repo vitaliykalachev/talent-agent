@@ -42,6 +42,10 @@
   <form method="post" action="/candidates/{{ c.id }}/reparse" class="inline"><button class="button ghost" type="submit">Разобрать заново</button></form>
 </div>
 
+{% if shown %}
+<div class="callout"><p>Подсвечены строки, на которых агент основал оценку по вакансии. <a href="/vacancies/{{ shown.vacancy_id }}/results#c{{ c.id }}">← К результату</a></p></div>
+{% endif %}
+
 <div class="tabs">
   <input type="radio" name="tab" id="tab-agent" checked>
   <label for="tab-agent">Что понял агент</label>
@@ -104,6 +108,14 @@
         <dt>ID в CRM</dt><dd>{{ c.external_id or "—" }}</dd>
         <dt>Файл резюме</dt><dd>{{ c.source_file or "—" }}</dd>
       </dl>
+      <h4 id="history">Оценки по вакансиям</h4>
+      {% if history %}
+      <ul class="history">
+        {% for m, vac, cat in history %}
+        <li><a href="/vacancies/{{ vac.id }}/results#c{{ c.id }}">{{ vac.title or "Без названия" }}</a> — {{ CATEGORIES[cat] }}{% if m.score is not none %}, оценка {{ m.score }}{% endif %} <small>{{ m.evaluated_at|short_date }}</small></li>
+        {% endfor %}
+      </ul>
+      {% else %}<p class="none">Ещё не оценивали ни по одной вакансии.</p>{% endif %}
       {% if merged %}
       <h4>Объединённые дубли</h4>
       <ul>{% for m in merged %}<li><a href="/candidates/{{ m.id }}">{{ m.full_name or "Без имени" }}</a> <small>{{ m.resume_date|short_date }}</small></li>{% endfor %}</ul>
