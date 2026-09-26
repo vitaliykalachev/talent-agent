@@ -16,6 +16,13 @@ from app.main import create_app
 from app.models import Candidate, Job
 
 
+@pytest.fixture(autouse=True)
+def worker_not_stopped():
+    """Выход из TestClient останавливает воркер (jobs.stopping); следующий тест должен
+    начинать с работающим run_pending, в каком бы порядке ни шли тесты."""
+    jobs.stopping.clear()
+
+
 @pytest.fixture
 def session(tmp_path):
     db.configure(tmp_path / "data")
