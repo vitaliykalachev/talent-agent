@@ -85,3 +85,66 @@ def test_duplicate_across_two_imports(tmp_path, do_import, active):
     do_import(csv(tmp_path, ["9", "Лисина Ольга", "+79005556677", "", "Уфа", "", "01.09.2026"]))
     (olga,) = active()
     assert olga.external_id == "9"
+
+
+def test_record_without_patronymic_initials_latin_and_yo_merged(tmp_path, do_import, active):
+    do_import(
+        csv(
+            tmp_path,
+            ["1", "Королёв Пётр Семёнович", "89001112233", "", "Тула", "", "01.01.2025"],
+            ["2", "Королев Петр", "+7 900 111-22-33", "", "", "", "01.02.2025"],
+            ["3", "Королев П. С.", "", "p.korolev+hh@gmail.com", "", "", "01.03.2025"],
+            [
+                "4",
+                "Petr Korolev",
+                "8 900 111 22 33",
+                "pkorolev@googlemail.com",
+                "",
+                "",
+                "01.04.2025",
+            ],
+        )
+    )
+    (petr,) = active()
+    assert petr.external_id == "4"
+
+
+def test_different_patronymics_with_same_phone_not_merged(tmp_path, do_import, active, session):
+    do_import(
+        csv(
+            tmp_path,
+            ["1", "Иванов Иван Петрович", "89001112233", "", "Тула", "", ""],
+            ["2", "Иванов Иван Сергеевич", "89001112233", "", "Тула", "", ""],
+        )
+    )
+    assert len(active()) == 2
+    dup = session.scalar(select(Duplicate))
+    assert dup.status == "open"  # общий контакт, ФИО противоречат — решает человек
+
+
+def test_shared_phone_of_different_people_not_merged(tmp_path, do_import, active, session):
+    """Общий телефон у мужа и жены: не сливаем, кладём в «нужно проверить»."""
+    do_import(
+        csv(
+            tmp_path,
+            ["1", "Смирнов Олег", "89002223344", "", "Омск", "", ""],
+            ["2", "Смирнова Анна", "89002223344", "", "Омск", "", ""],
+        )
+    )
+    assert len(active()) == 2
+    assert [d.status for d in session.scalars(select(Duplicate))] == ["open"]
+
+
+def test_contact_of_three_names_is_not_identifying(tmp_path, do_import, active, session):
+    """Телефон отдела кадров у трёх разных людей: ни слияния, ни пар в очереди."""
+    do_import(
+        csv(
+            tmp_path,
+            ["1", "Смирнов Олег", "84951234567", "", "", "", ""],
+            ["2", "Петров Иван", "84951234567", "", "", "", ""],
+            ["3", "Сидорова Анна", "84951234567", "", "", "", ""],
+            ["4", "Смирнов Олег", "84951234567", "o.smirnov@mail.ru", "", "", ""],
+        )
+    )
+    assert len(active()) == 4
+    assert session.scalar(select(Duplicate)) is None

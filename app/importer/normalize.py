@@ -4,6 +4,9 @@ import re
 from datetime import date, datetime, timedelta
 from functools import lru_cache
 
+import phonenumbers
+from rapidfuzz.distance import Levenshtein
+
 STALE_AFTER = timedelta(days=548)  # 18 месяцев
 
 CIS_CODES = ("375", "380", "998", "996", "994", "995", "992", "993", "374", "373")
@@ -34,20 +37,32 @@ NAME_WORD_RE = re.compile(r"^[А-ЯЁа-яё]+(?:-[А-ЯЁа-яё]+)?$")
 
 
 def normalize_phone(value) -> str | None:
-    """Номер в E.164 («+» и цифры); РФ и Казахстан — +7XXXXXXXXXX. 8-800 и шум — None."""
+    """Номер в E.164 через `phonenumbers` (регион RU); РФ и Казахстан — +7XXXXXXXXXX.
+    8-800, короткие номера и шум — None."""
     text = str(value or "").strip()
     if text.endswith(".0"):  # число из Excel
         text = text[:-2]
     digits = re.sub(r"\D", "", text)
-    if text.startswith("+") and not digits.startswith("7") and 11 <= len(digits) <= 15:
-        return "+" + digits
-    if len(digits) == 12 and digits.startswith(CIS_CODES):
-        return "+" + digits
-    if len(digits) == 11 and digits[0] in "78":
-        digits = digits[1:]
-    if len(digits) != 10 or digits[0] not in "34789" or digits.startswith("800"):
+    if text.startswith("+"):
+        text = "+" + digits
+    else:
+        text = digits
+        if len(digits) == 12 and digits.startswith(CIS_CODES):  # СНГ без «+»
+            text = "+" + digits
+        elif len(digits) == 11 and digits[0] in "78":
+            text = "+7" + digits[1:]
+        elif len(digits) == 10:
+            text = "+7" + digits
+    try:
+        number = phonenumbers.parse(text, "RU")
+    except phonenumbers.NumberParseException:
         return None
-    return "+7" + digits
+    if not phonenumbers.is_possible_number(number):
+        return None
+    e164 = phonenumbers.format_number(number, phonenumbers.PhoneNumberFormat.E164)
+    if e164.startswith("+7") and (e164[2] not in "34789" or e164[2:5] == "800"):
+        return None
+    return e164
 
 
 def extract_phones(text: str) -> list[str]:
@@ -58,6 +73,15 @@ def extract_phones(text: str) -> list[str]:
 def normalize_email(value) -> str | None:
     match = EMAIL_RE.search(str(value or ""))
     return match.group().lower() if match else None
+
+
+def email_key(email: str) -> str:
+    """Ключ почты для поиска дублей: у gmail.com и googlemail.com точки в имени и
+    «+метка» не значат ничего — ivan.petrov+hh@googlemail.com = ivanpetrov@gmail.com."""
+    local, _, domain = email.lower().partition("@")
+    if domain in ("gmail.com", "googlemail.com"):
+        return f"{local.split('+')[0].replace('.', '')}@gmail.com"
+    return f"{local}@{domain}"
 
 
 def extract_emails(text: str) -> list[str]:
@@ -221,3 +245,103 @@ def find_name(text: str, lines: int = 5) -> str | None:
         if match and match.fact.first and match.fact.last:
             return normalize_name(titled)
     return None
+
+
+# ── Совместимость ФИО для автослияния (раздел 7 плана) ─────────────────────────
+
+# Уменьшительные и разговорные формы → полные имена. Неоднозначные («Женя», «Саша»,
+# «Слава») ведут к нескольким.
+DIMINUTIVES = {
+    "саша": "александр александра", "шура": "александр александра", "саня": "александр",
+    "алеша": "алексей", "леша": "алексей", "толя": "анатолий", "андрюша": "андрей",
+    "аня": "анна", "анюта": "анна", "боря": "борис", "валя": "валентина валентин",
+    "вася": "василий", "витя": "виктор виталий", "вова": "владимир", "володя": "владимир",
+    "слава": "вячеслав ярослав владислав станислав", "галя": "галина", "дима": "дмитрий",
+    "митя": "дмитрий", "женя": "евгений евгения", "катя": "екатерина", "лена": "елена",
+    "ваня": "иван", "костя": "константин", "люда": "людмила", "мила": "людмила",
+    "миша": "михаил", "маша": "мария", "наташа": "наталья наталия", "наталия": "наталья",
+    "коля": "николай", "оля": "ольга", "паша": "павел", "петя": "петр", "сережа": "сергей",
+    "света": "светлана", "стас": "станислав", "таня": "татьяна", "юра": "юрий", "юля": "юлия",
+    "макс": "максим", "жора": "георгий", "гоша": "георгий", "гриша": "григорий",
+    "рома": "роман", "тема": "артем", "валера": "валерий", "гена": "геннадий",
+    "леня": "леонид", "ира": "ирина", "надя": "надежда", "люба": "любовь",
+    "ксюша": "ксения", "настя": "анастасия", "даша": "дарья", "соня": "софья софия",
+    "софия": "софья", "лиза": "елизавета", "рита": "маргарита", "лера": "валерия",
+    "вика": "виктория", "влад": "владислав", "лида": "лидия", "тоня": "антонина",
+    "зина": "зинаида", "нина": "нина", "федя": "федор", "сеня": "семен", "яша": "яков",
+    "эдик": "эдуард", "тимоша": "тимофей", "егорка": "егор", "кира": "кирилл кира",
+}  # fmt: skip
+
+
+def _cyrillic(word: str) -> str:
+    return to_cyrillic(word).replace("ё", "е")
+
+
+def _name_words(name: str) -> tuple[list[str], list[str]]:
+    """Полные слова и инициалы ФИО в нижнем регистре кириллицей: «Иванов И.П.» →
+    (["иванов"], ["и", "п"])."""
+    words, initials = [], []
+    for token in re.findall(r"[^\s.]+\.?", str(name or "")):
+        letters = token.rstrip(".")
+        if token.endswith(".") or len(letters) == 1:
+            initials.append(_cyrillic(letters)[:1])
+        else:
+            words.append(_cyrillic(letters))
+    return words, initials
+
+
+def _readings(name: str) -> list[tuple[str, str | None, str | None]]:
+    """Возможные прочтения (фамилия, имя, отчество); инициал — одна буква."""
+    words, initials = _name_words(name)
+    tail = [*initials, None, None]
+    if len(words) >= 3:
+        return [(words[0], words[1], words[2])]
+    if len(words) == 2:
+        if initials:
+            return [(words[0], words[1], initials[0]), (words[1], words[0], initials[0])]
+        return [(words[0], words[1], None), (words[1], words[0], None)]
+    if len(words) == 1:
+        return [(words[0], tail[0], tail[1])]
+    return []
+
+
+def _full_names(first: str) -> set[str]:
+    return {first, *DIMINUTIVES.get(first, "").split()}
+
+
+def _part_ok(a: str | None, b: str | None, fuzzy: bool = False) -> bool:
+    if a is None or b is None:
+        return True
+    if len(a) == 1 or len(b) == 1:
+        return a[0] == b[0]
+    if a == b:
+        return True
+    return fuzzy and min(len(a), len(b)) >= 5 and Levenshtein.distance(a, b) <= 1
+
+
+def _first_ok(a: str | None, b: str | None, latin: bool) -> bool:
+    if a is None or b is None or len(a) == 1 or len(b) == 1:
+        return _part_ok(a, b)
+    if _full_names(a) & _full_names(b):
+        return True
+    return latin and min(len(a), len(b)) >= 5 and Levenshtein.distance(a, b) <= 1
+
+
+def names_compatible(a: str | None, b: str | None) -> bool:
+    """Одно ли это лицо по ФИО: фамилия совпадает или отличается одной правкой при
+    длине от 5 букв, имя совпадает с учётом уменьшительных, отчества не противоречат,
+    инициалы совместимы; ё = е, латиница переводится в кириллицу. Нет ФИО — не мешает."""
+    if not a or not b:
+        return True
+    latin = bool(re.search(r"[A-Za-z]", f"{a}{b}"))
+    for last_a, first_a, middle_a in _readings(a):
+        for last_b, first_b, middle_b in _readings(b):
+            if (
+                _part_ok(last_a, last_b, fuzzy=True)
+                and len(last_a) > 1
+                and len(last_b) > 1
+                and _first_ok(first_a, first_b, latin)
+                and _part_ok(middle_a, middle_b)
+            ):
+                return True
+    return False

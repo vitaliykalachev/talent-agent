@@ -1,8 +1,11 @@
-"""Точные дубли: совпал нормализованный телефон или почта — записи объединяются сами.
+"""Точные дубли (раздел 7 плана): совпал нормализованный телефон или почта и ФИО
+совместимо — записи объединяются сами.
 
-Склейка идёт только по контактам из колонок выгрузки и шапки резюме. Совпадение с
-контактом из тела резюме (`body_contacts`) — лишь возможный дубль: пара уходит в
-очередь со статусом open, объединяет человек.
+Контакт, который встречается у трёх и более разных ФИО (общий телефон отдела
+кадров), неидентифицирующий: он не склеивает и не даёт пар. Общий контакт при
+несовместимом ФИО — возможный дубль: пара уходит в очередь со статусом open.
+Склейка идёт только по контактам из колонок выгрузки и шапки резюме; совпадение с
+контактом из тела резюме (`body_contacts`) — тоже лишь возможный дубль.
 """
 
 from datetime import date, datetime
@@ -10,9 +13,10 @@ from datetime import date, datetime
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
-from app.importer.normalize import is_stale
+from app.importer.normalize import email_key, is_stale, names_compatible
 from app.models import Candidate, Duplicate
 
+SHARED_BY = 3  # у стольких разных ФИО контакт уже ничего не значит
 MERGED_FIELDS = ("full_name", "city", "birth_year", "resume_date", "external_id", "source_file")
 
 
@@ -31,13 +35,21 @@ def merge_exact_duplicates(session: Session) -> int:
             i = parent[i]
         return i
 
-    owner: dict[str, int] = {}
+    holders: dict[str, list[Candidate]] = {}
     for c in active:
-        for key in [*c.phones, *c.emails]:
-            if key in owner:
-                parent[root(c.id)] = root(owner[key])
-            else:
-                owner[key] = c.id
+        for key in dict.fromkeys([*c.phones, *map(email_key, c.emails)]):
+            holders.setdefault(key, []).append(c)
+    seen = _seen_pairs(session)
+    for group in holders.values():
+        if len(group) < 2 or _people(group) >= SHARED_BY:
+            continue
+        for i, a in enumerate(group):
+            for b in group[i + 1 :]:
+                if names_compatible(a.full_name, b.full_name):
+                    parent[root(b.id)] = root(a.id)
+                elif (pair := frozenset((a.id, b.id))) not in seen:
+                    seen.add(pair)
+                    session.add(Duplicate(candidate_a=a.id, candidate_b=b.id, confidence=0.5))
 
     groups: dict[int, list[Candidate]] = {}
     for c in active:
@@ -77,14 +89,27 @@ def merge_exact_duplicates(session: Session) -> int:
     return merged
 
 
-def _queue_body_matches(session: Session) -> None:
+def _people(group: list[Candidate]) -> int:
+    """Сколько разных людей по ФИО: «Королёв Пётр» и «Petr Korolev» — один."""
+    names: list[str] = []
+    for c in group:
+        if c.full_name and not any(names_compatible(c.full_name, n) for n in names):
+            names.append(c.full_name)
+    return len(names)
+
+
+def _seen_pairs(session: Session) -> set[frozenset]:
     session.flush()
-    active = list(session.scalars(select(Candidate).where(Candidate.duplicate_of.is_(None))))
-    owner = {key: c.id for c in active for key in [*c.phones, *c.emails]}
-    seen = {
+    return {
         frozenset(pair)
         for pair in session.execute(select(Duplicate.candidate_a, Duplicate.candidate_b))
     }
+
+
+def _queue_body_matches(session: Session) -> None:
+    active = list(session.scalars(select(Candidate).where(Candidate.duplicate_of.is_(None))))
+    owner = {key: c.id for c in active for key in [*c.phones, *c.emails]}
+    seen = _seen_pairs(session)
     for c in active:
         for key in c.body_contacts:
             other = owner.get(key)

@@ -3,11 +3,13 @@ from datetime import date, datetime
 import pytest
 
 from app.importer.normalize import (
+    email_key,
     extract_birth_year,
     extract_emails,
     extract_phones,
     extract_resume_date,
     is_stale,
+    names_compatible,
     normalize_email,
     normalize_name,
     normalize_phone,
@@ -96,3 +98,50 @@ def test_stale_after_18_months():
     assert is_stale(date(2025, 2, 1), today) is True
     assert is_stale(date(2025, 6, 1), today) is False
     assert is_stale(None, today) is True
+
+
+@pytest.mark.parametrize(
+    "raw", ["+7 (912) 345-67-89", "8 912 345 67 89", "+7-912-345-67-89 доб.", "89123456789"]
+)
+def test_phone_through_phonenumbers_to_e164(raw):
+    assert normalize_phone(raw) == "+79123456789"
+
+
+def test_gmail_key_ignores_dots_and_plus_tag():
+    assert email_key("Ivan.Petrov+hh@GoogleMail.com") == "ivanpetrov@gmail.com"
+    assert email_key("i.v.a.n.petrov@gmail.com") == "ivanpetrov@gmail.com"
+    assert email_key("ivan.petrov+work@mail.ru") == "ivan.petrov+work@mail.ru"  # не gmail
+
+
+@pytest.mark.parametrize(
+    "a,b",
+    [
+        ("Иванов Иван Петрович", "Иванов Иван"),  # без отчества
+        ("Иванов Иван Петрович", "Иванов И. П."),  # инициалы
+        ("Иванов Иван Петрович", "И.П. Иванов"),
+        ("Иванов Иван", "Ivanov Ivan"),  # латиница
+        ("Сергеев Алексей", "Aleksey Sergeev"),
+        ("Королёв Пётр Семёнович", "Королев Петр Семенович"),  # ё
+        ("Иванов Александр", "Иванов Саша"),  # уменьшительное
+        ("Кузнецова Анна", "Кузнецова Аня"),
+        ("Кузнецова Анна", "Кузнецева Анна"),  # одна правка в фамилии
+        ("Иван Иванов", "Иванов Иван"),  # порядок слов
+    ],
+)
+def test_compatible_names(a, b):
+    assert names_compatible(a, b) and names_compatible(b, a)
+
+
+@pytest.mark.parametrize(
+    "a,b",
+    [
+        ("Иванов Иван Петрович", "Иванов Иван Сергеевич"),  # разные отчества
+        ("Иванов Иван", "Иванова Анна"),  # муж и жена с общим телефоном
+        ("Иванов Иван", "Петров Иван"),
+        ("Ли Ян", "Ли Ир"),  # короткая фамилия — только точное совпадение имени
+        ("Иванов Иван Петрович", "Иванов И. С."),
+        ("Орлов Олег", "Орлов Игорь"),
+    ],
+)
+def test_incompatible_names(a, b):
+    assert not names_compatible(a, b) and not names_compatible(b, a)
