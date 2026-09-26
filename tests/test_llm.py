@@ -122,6 +122,22 @@ def test_sdk_status_errors_classified(monkeypatch, code, retried):
         )
 
 
+def test_cached_input_counted_in_volume(monkeypatch):
+    """Живая проверка этапа 3: хаб отдаёт часть входа как кэш — он тоже в счётчике."""
+    from types import SimpleNamespace
+
+    model = llm.AnthropicLLM("m", "http://hub.local", "k")
+    usage = SimpleNamespace(
+        input_tokens=100, output_tokens=50, cache_read_input_tokens=900,
+        cache_creation_input_tokens=None,
+    )  # fmt: skip
+    block = SimpleNamespace(type="tool_use", input={"title": "Т", "years": 1})
+    reply = SimpleNamespace(usage=usage, content=[block])
+    monkeypatch.setattr(model.client.messages, "create", lambda **kw: reply)
+    assert model.complete_structured(Answer, "s", "технолог").years == 1
+    assert (model.tokens_in, model.tokens_out) == (1000, 50)
+
+
 def test_bad_key_gives_human_message(tmp_path):
     model = mock(tmp_path, response={"__error__": "auth"})
     with pytest.raises(AuthError, match="Ключ доступа не подошёл"):

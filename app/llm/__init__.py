@@ -168,7 +168,12 @@ class AnthropicLLM(LLM):
             ],
             tool_choice={"type": "tool", "name": TOOL},
         )
-        self._count(reply.usage.input_tokens, reply.usage.output_tokens)
+        usage = reply.usage
+        # Вход из кэша прокси считается отдельно; без него объём и цена занижаются.
+        cached = (getattr(usage, "cache_read_input_tokens", 0) or 0) + (
+            getattr(usage, "cache_creation_input_tokens", 0) or 0
+        )
+        self._count(usage.input_tokens + cached, usage.output_tokens)
         for block in reply.content:
             if block.type == "tool_use":
                 return block.input
