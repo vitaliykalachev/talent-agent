@@ -28,7 +28,7 @@
       {% if frag %}<div class="frag">{{ frag }}</div>{% endif %}</td>
     <td data-label="Должность и компания">{{ title or "—" }}{% if company %}<br><small>{{ company }}</small>{% endif %}</td>
     <td data-label="Город">{{ c.city or p.city or "—" }}</td>
-    <td class="num" data-label="Стаж">{% if p.total_years is number %}{{ "%g"|format(p.total_years) }} {{ "г." }}{% else %}—{% endif %}</td>
+    <td class="num" data-label="Стаж">{% if p.total_years is number %}{{ ("%g"|format(p.total_years))|replace(".", ",") }} {{ "г." }}{% else %}—{% endif %}</td>
     <td data-label="Резюме">{% if c.stale %}<span class="pill mid">{{ c|stale_label }}</span>{% else %}{{ c.resume_date|short_date }}{% endif %}</td>
     {% if r.mode == "meaning" %}<td data-label="Близость"><span class="pill {{ 'go' if near == 'очень близко' else 'mid' if near == 'близко' else '' }}">{{ near }}</span></td>{% endif %}
   </tr>

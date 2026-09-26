@@ -1,7 +1,8 @@
 """Демо-набор: 300 синтетических резюме, выгрузка «как из CRM» и папка с DOCX и TXT.
 
 Запуск: `make demo` (или `TA_DATA_DIR=data/demo uv run python -m app.demo`).
-Набор проходит через обычный конвейер импорта. Ответов ИИ-модели здесь нет — это этап 4.
+Набор проходит через обычный конвейер импорта, потом разбирается на записанных
+ответах модели (out/llm/answers.json) и получает смысловые отпечатки.
 """
 
 import csv
@@ -16,9 +17,10 @@ from datetime import date, timedelta
 from pathlib import Path
 from xml.sax.saxutils import escape
 
-from app import db
+from app import config, db
 from app.importer.pipeline import new_batch, start_import
 from app.jobs import run_pending
+from app.parse import start_parse, waiting_ids
 
 PER_PROFESSION = 60
 DUPLICATE_SHARE = 0.05
@@ -794,6 +796,12 @@ def main() -> None:
     with db.SessionLocal() as session:
         batch = new_batch(session, table, [resumes])
         start_import(session, batch, batch.mapping)
+    run_pending()
+    # Разбор на записанных ответах модели — демо работает без ключа и без сети;
+    # в «Настройках» можно переключиться на настоящий сервис и «Разобрать заново».
+    config.save({"llm_provider": "mock", "llm_fixtures": str(db.data_dir / "source" / "llm")})
+    with db.SessionLocal() as session:
+        start_parse(session, waiting_ids(session))
     run_pending()
     print(f"Демо готово: {db.data_dir / 'app.db'}")
 

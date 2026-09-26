@@ -69,7 +69,7 @@
         </dd>
 
         <dt id="f-total_years">Стаж</dt>
-        <dd>{% if p.total_years is number %}{{ "%g"|format(p.total_years) }} лет{% if p.total_years_check %} <span class="pill mid">проверьте: в резюме {{ "%g"|format(p.total_years_stated) }}</span>{% endif %}{% else %}{{ missing() }}{% endif %}{{ edited("total_years") }}{{ fix("total_years", p.total_years) }}</dd>
+        <dd>{% if p.total_years is number %}{{ ("%g"|format(p.total_years))|replace(".", ",") }} лет{% if p.total_years_check %} <span class="pill mid">проверьте: в резюме {{ "%g"|format(p.total_years_stated) }}</span>{% endif %}{% else %}{{ missing() }}{% endif %}{{ edited("total_years") }}{{ fix("total_years", p.total_years) }}</dd>
 
         <dt id="f-skills">Навыки</dt>
         <dd>{{ p.skills|join(", ") or missing() }}{{ edited("skills") }}{{ fix("skills", p.skills) }}</dd>
