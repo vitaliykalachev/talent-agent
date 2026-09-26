@@ -166,3 +166,57 @@ dl.facts dd{margin:0}
   table.stack td.name{font-size:17px;font-weight:700;padding-bottom:8px}
   table.stack td.num{text-align:left;white-space:normal}
 }
+
+/* ── Этап 2: разбор, поиск, карточка ─── */
+.actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:12px}
+.offer{margin:22px 0}
+.confirm .lead{font-size:17px;color:var(--ink);font-weight:600}
+.confirm form{display:flex;flex-wrap:wrap;gap:10px;margin-top:14px}
+ul.stages{list-style:none;padding:0;margin:10px 0;font-size:14px}
+ul.stages li{margin-bottom:4px;padding-left:20px;position:relative}
+ul.stages li::before{content:"○";position:absolute;left:0;color:var(--ink-mute)}
+ul.stages li.st-done::before{content:"✓";color:var(--green)}
+ul.stages li.st-run::before{content:"●";color:var(--accent)}
+form.inline{display:inline}
+.status-line{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:0 0 18px}
+input[type=number],input[type=password],textarea{
+  font:inherit;font-size:15px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;
+  background:var(--bg);color:var(--ink);max-width:100%;
+}
+input[type=number]{width:130px}
+.settings input[type=text],.settings input[type=password]{width:100%}
+.prices{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:0 14px}
+form.filters .grow{flex:1 1 320px}
+form.filters .grow input{width:100%}
+.searching{margin:6px 0 10px;color:var(--ink-soft)}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin:6px 0 10px}
+.chip{
+  display:inline-flex;gap:6px;align-items:center;font-size:13.5px;padding:4px 10px;border-radius:20px;
+  background:var(--accent-soft);color:var(--accent);text-decoration:none;
+}
+.frag{font-size:13.5px;color:var(--ink-soft);font-weight:400;margin-top:6px;line-height:1.5}
+mark{background:#fff1b8;color:inherit;border-radius:3px;padding:0 2px}
+mark:target{background:#ffd666;outline:2px solid var(--amber)}
+.none{color:var(--ink-mute);font-style:italic}
+.edited{color:var(--green)}
+.pos{margin-bottom:8px}
+details.fix{display:inline-block;margin-left:6px;font-size:13px}
+details.fix summary{cursor:pointer;color:var(--accent);list-style:none}
+details.fix[open]{display:block;margin:6px 0}
+details.fix form{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px}
+details.fix textarea{width:100%}
+.tabs > input,.tabs > label{display:none}
+.split{display:grid;grid-template-columns:1fr 1fr;gap:22px;align-items:start}
+.split .source{position:sticky;top:10px;max-height:90vh;overflow:auto}
+@media (max-width:820px){
+  .split{grid-template-columns:1fr}
+  .split .source{position:static;max-height:none}
+  .tabs > label{
+    display:inline-block;padding:8px 14px;border:1px solid var(--line);border-radius:20px;
+    margin:0 6px 14px 0;font-size:14px;color:var(--ink);cursor:pointer;
+  }
+  .tabs > input:checked + label{background:var(--accent);color:#fff;border-color:var(--accent)}
+  #tab-agent:checked ~ .split .source{display:none}
+  #tab-source:checked ~ .split .agent{display:none}
+  input[type=number]{width:100%}
+}

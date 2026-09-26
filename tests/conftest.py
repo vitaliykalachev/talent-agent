@@ -9,7 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
-from app import db
+from app import db, jobs
 from app.importer.pipeline import new_batch, start_import
 from app.jobs import run_pending
 from app.main import create_app
@@ -27,6 +27,7 @@ def session(tmp_path):
 def client(tmp_path):
     with TestClient(create_app(tmp_path / "data")) as c:
         yield c
+    jobs.stopping.clear()  # остановка приложения не должна глушить run_pending в других тестах
 
 
 @pytest.fixture
@@ -52,3 +53,31 @@ def active(session):
         return list(session.scalars(q))
 
     return _active
+
+
+@pytest.fixture(scope="session")
+def demo_base(tmp_path_factory):
+    """Демо-база из 300 кандидатов, разобранная на записанных ответах и с отпечатками.
+
+    Общая на весь прогон и только для чтения; вызов подключает её и возвращает папку.
+    """
+    from app import config
+    from app.demo import generate
+    from app.parse import start_parse, waiting_ids
+
+    root = tmp_path_factory.mktemp("demo")
+    db.configure(root / "data")
+    table, resumes = generate(root / "source")
+    with db.SessionLocal() as s:
+        start_import(s, batch := new_batch(s, table, [resumes]), batch.mapping)
+    run_pending()
+    config.save({"llm_provider": "mock", "llm_fixtures": str(root / "source" / "llm")})
+    with db.SessionLocal() as s:
+        start_parse(s, waiting_ids(s))
+    run_pending()
+
+    def connect():
+        db.configure(root / "data")
+        return root / "data"
+
+    return connect

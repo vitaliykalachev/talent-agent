@@ -82,7 +82,11 @@ def demo_records(tmp_path_factory):
     caps = [c for c in items if (c.full_name or "").upper() in c.raw_text]
     files = [c for c in items if c.source_file]
     rows = [c for c in items if not c.source_file]
-    picked = {c.id: c for c in caps[:7] + files[:7] + rows[:6]}
+    picked: dict = {}
+    for group, n in ((caps, 7), (files, 14), (rows, 20)):
+        for c in group:
+            if len(picked) < n:
+                picked.setdefault(c.id, c)
     assert len(caps) >= 7 and len(picked) == 20
     return list(picked.values())
 

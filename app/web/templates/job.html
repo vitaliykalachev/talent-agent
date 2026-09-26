@@ -6,14 +6,14 @@
   <div class="bar-track"><div class="bar-fill done" style="width:100%"></div></div>
   <p><a href="/candidates">Открыть кандидатов</a> · <a href="/">На главную</a></p>
   {% elif job.status == "failed" %}
-  <h4>Разбор остановился с ошибкой</h4>
+  <h4>Не получилось</h4>
   <p>{{ job.error }}</p>
   {% else %}
-  <h4>{{ "В очереди" if job.status == "queued" else "Идёт разбор" }}: {{ job.progress }} из {{ job.total or "…" }}</h4>
+  <h4>{{ "В очереди" if job.status == "queued" else "Читаем файлы" }}: {{ job.progress|num }} из {{ job.total|num if job.total else "…" }}</h4>
   <div class="bar-track"><div class="bar-fill" style="width:{{ pct }}%"></div></div>
-  <p><small>Страницу можно закрыть: разбор идёт на сервере, а после перезапуска продолжится с того же места.</small></p>
+  <p><small>Можно закрыть вкладку и работать дальше: после перезапуска загрузка продолжится с того же места.</small></p>
   {% endif %}
   {% if job.error and job.status != "failed" %}
-  <p><small>Не удалось прочитать: {{ job.error.splitlines()|join(", ") }}</small></p>
+  <p><small>{{ problem_summary(job) }}. <a href="/jobs/{{ job.id }}/problems">Показать список</a></small></p>
   {% endif %}
 </div>
