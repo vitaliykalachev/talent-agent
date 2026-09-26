@@ -2,7 +2,7 @@ services:
   app:
     build: .
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"  # наружу не открываем, пока нет входа
     volumes:
       - ./data:/srv/data
     restart: unless-stopped

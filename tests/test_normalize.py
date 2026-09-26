@@ -23,9 +23,25 @@ def test_phone_to_plus7(raw):
     assert normalize_phone(raw) == "+79123456789"
 
 
-@pytest.mark.parametrize("raw", ["123", "", "2015-2019", "+44 20 7946 0958"])
-def test_phone_rejects_non_russian_and_noise(raw):
+@pytest.mark.parametrize("raw", ["123", "", "2015-2019", "8 800 555-35-35", "+7 800 100 00 00"])
+def test_phone_rejects_noise_and_toll_free(raw):
     assert normalize_phone(raw) is None
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("+7 701 234 56 78", "+77012345678"),  # Казахстан
+        ("8 (727) 123-45-67", "+77271234567"),
+        ("+375 (29) 123-45-67", "+375291234567"),
+        ("375 29 123 45 67", "+375291234567"),
+        ("+998 90 123 45 67", "+998901234567"),
+        ("+44 20 7946 0958", "+442079460958"),
+    ],
+)
+def test_phone_non_russian_to_e164(raw, expected):
+    assert normalize_phone(raw) == expected
+    assert extract_phones(f"Тел.: {raw}, пишите") == [expected]
 
 
 def test_extract_phones_from_text_skips_years_and_salary():
@@ -47,6 +63,12 @@ def test_email_lowercase_and_extract():
         ("ПЕТРОВА анна", "Петрова Анна"),
         ("Анна Петрова", "Петрова Анна"),
         ("  смирнова-щедрина   ольга ", "Смирнова-Щедрина Ольга"),
+        # мужские пары без явной фамилии остаются в порядке источника
+        ("Сидоров Сергей", "Сидоров Сергей"),
+        ("СИДОРОВ Сергей", "Сидоров Сергей"),
+        ("Александр Михайлов", "Александр Михайлов"),
+        ("Михайлов Александр", "Михайлов Александр"),
+        ("Сергей СИДОРОВ", "Сидоров Сергей"),
         ("", None),
     ],
 )

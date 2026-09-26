@@ -1,4 +1,9 @@
-"""Точные дубли: совпал нормализованный телефон или почта — записи объединяются сами."""
+"""Точные дубли: совпал нормализованный телефон или почта — записи объединяются сами.
+
+Склейка идёт только по контактам из колонок выгрузки и шапки резюме. Совпадение с
+контактом из тела резюме (`body_contacts`) — лишь возможный дубль: пара уходит в
+очередь со статусом open, объединяет человек.
+"""
 
 from datetime import date, datetime
 
@@ -61,6 +66,29 @@ def merge_exact_duplicates(session: Session) -> int:
                 Duplicate(candidate_a=main.id, candidate_b=old.id, confidence=1.0, status="merged")
             )
             merged += 1
+            main.body_contacts = [
+                c
+                for c in dict.fromkeys([*main.body_contacts, *old.body_contacts])
+                if c not in {*main.phones, *main.emails}
+            ]
         main.stale = is_stale(main.resume_date)
+    _queue_body_matches(session)
     session.commit()
     return merged
+
+
+def _queue_body_matches(session: Session) -> None:
+    session.flush()
+    active = list(session.scalars(select(Candidate).where(Candidate.duplicate_of.is_(None))))
+    owner = {key: c.id for c in active for key in [*c.phones, *c.emails]}
+    seen = {
+        frozenset(pair)
+        for pair in session.execute(select(Duplicate.candidate_a, Duplicate.candidate_b))
+    }
+    for c in active:
+        for key in c.body_contacts:
+            other = owner.get(key)
+            if other is None or other == c.id or frozenset((other, c.id)) in seen:
+                continue
+            seen.add(frozenset((other, c.id)))
+            session.add(Duplicate(candidate_a=other, candidate_b=c.id, confidence=0.5))

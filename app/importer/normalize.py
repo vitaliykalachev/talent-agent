@@ -6,8 +6,15 @@ from functools import lru_cache
 
 STALE_AFTER = timedelta(days=548)  # 18 месяцев
 
+CIS_CODES = ("375", "380", "998", "996", "994", "995", "992", "993", "374", "373")
 PHONE_RE = re.compile(
-    r"(?<![\d\w])(?:\+7|8|7)?[\s\-(]*\d{3}[\s\-)]*\d{3}[\s\-]*\d{2}[\s\-]*\d{2}(?!\d)"
+    # международный с «+»: +44 20 7946 0958, +375 (29) 123-45-67, +7(495)1234567
+    r"\+\d{1,3}(?:[ \-]?\(?\d{2,7}\)?){2,5}(?!\d)"
+    # СНГ без «+»: 375 29 123 45 67
+    rf"|(?<![\d\w])(?:{'|'.join(CIS_CODES)})"
+    r"[ \-]?\(?\d{2,3}\)?[ \-]?\d{3}[ \-]?\d{2}[ \-]?\d{2}(?!\d)"
+    # РФ и Казахстан: 8 (912) 345-67-89, 9123456789
+    r"|(?<![\d\w])(?:8|7)?[\s\-(]*\d{3}[\s\-)]*\d{3}[\s\-]*\d{2}[\s\-]*\d{2}(?!\d)"
 )
 EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)*\.[a-zа-я]{2,}", re.IGNORECASE)
 DATE_RE = re.compile(r"\b(\d{1,2})[./](\d{1,2})[./](\d{4})\b|\b(\d{4})-(\d{2})-(\d{2})\b")
@@ -21,18 +28,24 @@ RESUME_DATE_RE = re.compile(
     r"(\d{1,2}[./]\d{1,2}[./]\d{4}|\d{4}-\d{2}-\d{2})",
     re.IGNORECASE,
 )
+FEMALE_SURNAME_ENDINGS = ("ова", "ева", "ёва", "ская", "цкая")
 PATRONYMIC_ENDINGS = ("вич", "вна", "ична", "инична", "оглы", "кызы")
 NAME_WORD_RE = re.compile(r"^[А-ЯЁа-яё]+(?:-[А-ЯЁа-яё]+)?$")
 
 
 def normalize_phone(value) -> str | None:
+    """Номер в E.164 («+» и цифры); РФ и Казахстан — +7XXXXXXXXXX. 8-800 и шум — None."""
     text = str(value or "").strip()
     if text.endswith(".0"):  # число из Excel
         text = text[:-2]
     digits = re.sub(r"\D", "", text)
+    if text.startswith("+") and not digits.startswith("7") and 11 <= len(digits) <= 15:
+        return "+" + digits
+    if len(digits) == 12 and digits.startswith(CIS_CODES):
+        return "+" + digits
     if len(digits) == 11 and digits[0] in "78":
         digits = digits[1:]
-    if len(digits) != 10 or digits[0] not in "3489":
+    if len(digits) != 10 or digits[0] not in "34789" or digits.startswith("800"):
         return None
     return "+7" + digits
 
@@ -63,17 +76,31 @@ def _title(word: str) -> str:
 
 
 def normalize_name(value) -> str | None:
-    """ФИО в порядке «Фамилия Имя Отчество» с правильным регистром."""
-    words = [_title(w) for w in str(value or "").split()]
+    """ФИО в порядке «Фамилия Имя Отчество» с правильным регистром.
+
+    Два слова переставляются, только когда фамилия видна явно: вторая стоит капсом
+    («Сергей СИДОРОВ») или у неё женская фамильная форма («Анна Петрова»). Мужские
+    пары вроде «Александр Михайлов» / «Михайлов Александр» надёжно не различить —
+    порядок остаётся как в источнике.
+    """
+    raw = str(value or "").split()
+    words = [_title(w) for w in raw]
     if not words:
         return None
     text = " ".join(words)
+    if len(words) == 2:
+        first_caps, second_caps = (w.isupper() and len(w) > 1 for w in raw)
+        second_surname = second_caps and not first_caps
+        female = words[1].endswith(FEMALE_SURNAME_ENDINGS)
+        if second_surname or (female and not words[0].endswith(FEMALE_SURNAME_ENDINGS)):
+            return f"{words[1]} {words[0]}"
+        return text
     # Отчество узнаётся по окончанию — порядок ясен и без natasha (она ~30 мс на имя).
     if len(words) == 3 and words[2].endswith(PATRONYMIC_ENDINGS):
         return text
     if len(words) == 3 and words[1].endswith(PATRONYMIC_ENDINGS):
         return " ".join([words[2], words[0], words[1]])
-    if 2 <= len(words) <= 3 and all(NAME_WORD_RE.match(w) for w in words):
+    if len(words) == 3 and all(NAME_WORD_RE.match(w) for w in words):
         match = _names_extractor().find(text)
         fact = match.fact if match else None
         if fact and fact.first and fact.last:

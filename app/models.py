@@ -44,6 +44,10 @@ class Candidate(Base):
     parse_status: Mapped[str] = mapped_column(String(16), default="new")  # new|parsed|failed
     stale: Mapped[bool] = mapped_column(Boolean, default=False)
     duplicate_of: Mapped[int | None] = mapped_column(ForeignKey("candidates.id"), index=True)
+    batch_id: Mapped[int | None] = mapped_column(Integer)  # партия импорта, создавшая запись
+    # Телефоны и почта из тела резюме (не из шапки): могут быть чужими, в автосклейке не участвуют.
+    body_contacts: Mapped[list] = mapped_column(JSON, default=list)
+    parse_error: Mapped[str | None] = mapped_column(Text)
 
 
 class Embedding(Base):
