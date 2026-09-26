@@ -488,7 +488,11 @@ def vetoed(checks: list[dict]) -> bool:
 
 
 def category(m: Match) -> str:
-    """Категорию считает сервер. Правила по вердиктам, а где они не решают — пороги."""
+    """Категорию считает сервер по вердиктам: «Подходят» — все обязательные есть и
+    подтверждено большинство желательных; «Можно рассмотреть» — обязательные есть, по
+    части желательных нет подтверждения. Где правила не решают (обязательное частично
+    или без данных, вакансия без обязательных), работают пороги 75 и 55 — но без всех
+    обязательных выше «Можно рассмотреть» кандидат не поднимается."""
     if m.status != "ok" or m.score is None:
         return FAILED
     if vetoed(m.checks):
@@ -498,7 +502,7 @@ def category(m: Match) -> str:
     if must and all(ch["verdict"] == "met" for ch in must):
         confirmed = sum(ch["verdict"] == "met" for ch in nice)
         return FIT if not nice or confirmed > len(nice) / 2 else MAYBE
-    if m.score >= FIT_FROM:
+    if not must and m.score >= FIT_FROM:
         return FIT
     return MAYBE if m.score >= MAYBE_FROM else UNFIT
 

@@ -314,12 +314,18 @@ def test_categories_by_checks_then_fallback_thresholds():
     assert category_of(mk(r1="not_met")) == ev.UNFIT
     assert category_of(mk(r5="met")) == ev.UNFIT
     assert category_of(mk(), status="failed") == ev.FAILED
-    # обязательное «частично» правила не решают — запасные пороги 75 и 55
-    assert ev.score(mk(r2="partial")) == 83 and category_of(mk(r2="partial")) == ev.FIT
+    # обязательное «частично» правила не решают — порог 55; без всех обязательных
+    # выше «Можно рассмотреть» не поднимается, даже при 83
+    assert ev.score(mk(r2="partial")) == 83 and category_of(mk(r2="partial")) == ev.MAYBE
     low = mk(r2="partial", r3="no_data", r4="not_met")
     assert ev.score(low) == 54 and category_of(low) == ev.UNFIT
     mid = mk(r2="no_data", r4="no_data")
     assert ev.score(mid) == 62 and category_of(mid) == ev.MAYBE
+    # вакансия без обязательных — только пороги 75 и 55
+    only_nice = [ch for ch in mk(r3="partial") if ch["kind"] == "nice"]
+    assert ev.score(only_nice) == 75 and category_of(only_nice) == ev.FIT
+    only_nice = [ch for ch in mk(r3="partial", r4="partial") if ch["kind"] == "nice"]
+    assert category_of(only_nice) == ev.UNFIT  # 50
     assert (ev.FIT_FROM, ev.MAYBE_FROM) == (75, 55)
 
 

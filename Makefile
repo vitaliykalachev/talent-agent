@@ -18,3 +18,7 @@ lint:
 demo:
 	TA_DATA_DIR=data/demo uv run python -m app.demo
 	TA_DATA_DIR=data/demo uv run app
+
+# Набор проверки: Recall@40, Recall@200, nDCG@10 для вектора, BM25 и гибрида.
+eval:
+	uv run python -m eval.run data/eval

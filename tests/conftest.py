@@ -57,7 +57,8 @@ def active(session):
 
 @pytest.fixture(scope="session")
 def demo_base(tmp_path_factory):
-    """Демо-база из 300 кандидатов, разобранная на записанных ответах и с отпечатками.
+    """Демо-база из 300 кандидатов, разобранная на записанных ответах, с отпечатками и
+    готовой демо-вакансией.
 
     Общая на весь прогон и только для чтения; вызов подключает её и возвращает папку.
     """
@@ -75,6 +76,9 @@ def demo_base(tmp_path_factory):
     with db.SessionLocal() as s:
         start_parse(s, waiting_ids(s))
     run_pending()
+    from app import demo_vacancy
+
+    demo_vacancy.create(root / "source" / "llm")  # готовая вакансия с оценкой, как в make demo
 
     def connect():
         db.configure(root / "data")

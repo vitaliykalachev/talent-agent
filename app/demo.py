@@ -2,7 +2,8 @@
 
 Запуск: `make demo` (или `TA_DATA_DIR=data/demo uv run python -m app.demo`).
 Набор проходит через обычный конвейер импорта, потом разбирается на записанных
-ответах модели (out/llm/answers.json) и получает смысловые отпечатки.
+ответах модели (out/llm/answers.json), получает смысловые отпечатки и одну готовую
+вакансию с оценкой (`app/demo_vacancy.py`).
 """
 
 import csv
@@ -17,7 +18,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from xml.sax.saxutils import escape
 
-from app import config, db
+from app import config, db, demo_vacancy
 from app.importer.pipeline import new_batch, start_import
 from app.jobs import run_pending
 from app.parse import start_parse, waiting_ids
@@ -826,10 +827,9 @@ def generate(out: Path, seed: int = 42, today: date | None = None) -> tuple[Path
     return table, resumes
 
 
-def main() -> None:
-    target = Path(os.environ.get("TA_DATA_DIR") or "data/demo")
-    if target.name != "demo" and (target / "app.db").exists():
-        sys.exit(f"Демо пересоздаёт базу; {target} не похожа на демо-папку, не трогаю.")
+def build(target: Path) -> None:
+    """Чистая демо-база в `target`: импорт, разбор на записанных ответах, отпечатки и
+    готовая вакансия с оценкой (раздел 9 плана)."""
     db.configure(target)
     if (db.data_dir / "app.db").exists():  # демо всегда начинается с чистой базы
         db.engine.dispose()
@@ -844,10 +844,19 @@ def main() -> None:
     run_pending()
     # Разбор на записанных ответах модели — демо работает без ключа и без сети;
     # в «Настройках» можно переключиться на настоящий сервис и «Разобрать заново».
-    config.save({"llm_provider": "mock", "llm_fixtures": str(db.data_dir / "source" / "llm")})
+    fixtures = db.data_dir / "source" / "llm"
+    config.save({"llm_provider": "mock", "llm_fixtures": str(fixtures)})
     with db.SessionLocal() as session:
         start_parse(session, waiting_ids(session))
     run_pending()
+    demo_vacancy.create(fixtures)
+
+
+def main() -> None:
+    target = Path(os.environ.get("TA_DATA_DIR") or "data/demo")
+    if target.name != "demo" and (target / "app.db").exists():
+        sys.exit(f"Демо пересоздаёт базу; {target} не похожа на демо-папку, не трогаю.")
+    build(target)
     print(f"Демо готово: {db.data_dir / 'app.db'}")
 
 
