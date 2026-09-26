@@ -112,10 +112,12 @@ candidates          — id, external_id (id из CRM), raw_text, source_file, im
                       duplicate_of (id|null)
 embeddings          — candidate_id, model, vector (BLOB float32), created_at
 vacancies           — id, title, description, hard_filters (JSON), top_n,
-                      requirements (JSON: [{name, kind: must|nice, source: ai|user}]) —
-                      «Портрет кандидата»: до 6 обязательных и до 4 желательных,
+                      requirements (JSON: [{name, kind: must|nice|avoid, source: ai|user}]) —
+                      «Портрет кандидата»: до 6 обязательных, до 4 желательных
+                      и «чего точно не надо»; агент помечает расплывчатые
+                      («есть опыт») и дискриминационные (возраст, пол) формулировки,
                       created_at, schedule_enabled
-matches             — vacancy_id, candidate_id, score 0–100, prev_score,
+matches             — vacancy_id, candidate_id, status (ok|failed), score 0–100, prev_score,
                       change_reason (new|resume_updated|vacancy_changed|null), reasons[],
                       concerns[], requirements[], questions[] (по схеме Evaluation),
                       evaluated_at, model, decision (invite|maybe|reject|null),
@@ -384,6 +386,9 @@ fit_summary      — короткий итог
 - На экранах нет слов «провайдер», «cron», «эмбеддинг», «токен», «парсинг».
 - Все экраны читаются на телефоне.
 - Тесты зелёные, `ruff` чистый.
+- Есть эталонный набор из 20 резюме и 3 вакансий с ожидаемыми вердиктами; он
+  прогоняется при смене модели или промпта, и модель записана в каждый результат —
+  прокси может сменить её без предупреждения.
 
 ## 12. Чего в MVP нет намеренно
 
