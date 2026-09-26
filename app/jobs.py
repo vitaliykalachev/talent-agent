@@ -21,9 +21,11 @@ stopping = threading.Event()  # выставляется при остановк
 
 
 def _handlers():
+    from app.embed import run_embed
     from app.importer.pipeline import run_import
+    from app.parse import run_parse
 
-    return {"import": run_import}
+    return {"import": run_import, "parse": run_parse, "embed": run_embed}
 
 
 def enqueue(session: Session, kind: str, payload: dict) -> Job:

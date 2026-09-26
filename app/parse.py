@@ -1,0 +1,339 @@
+"""Разбор резюме моделью в схему CandidateProfile (раздел 5 плана).
+
+Задача `parse` берёт список id, идёт пачками по 20, в каждой пачке — до 4 запросов
+параллельно. Модели уходит только обезличенный текст. После пачки прогресс и
+результаты сохраняются одной транзакцией, поэтому перезапуск продолжает с места.
+Исправления пользователя (`parsed["edits"]`) повторный разбор не перезаписывает.
+"""
+
+import re
+import time
+from concurrent.futures import ThreadPoolExecutor
+from datetime import date, datetime
+from typing import Literal
+
+from pydantic import BaseModel, Field, model_validator
+from sqlalchemy import delete, func, select
+from sqlalchemy.orm import Session
+
+from app import config, db
+from app.anonymize import anonymize, quote_span
+from app.jobs import enqueue, stopping
+from app.llm import AuthError, LLMError, get_llm
+from app.models import Candidate, Embedding, Job
+
+BATCH = 20
+PARALLEL = 4
+MAX_CHARS = 12_000  # длиннее резюме не бывает по делу; хвост режем ради цены
+MIN_CHARS = 40
+CURRENT_RE = re.compile(
+    r"^\s*(?:по\s+|до\s+)?(?:н\.?\s*/?\s*в\.?|наст(?:оящее|\.)?\s*(?:вр(?:емя|\.)?)?|сейчас"
+    r"|сей\s+день|сих\s+пор|present|now|current)\s*\.?$",
+    re.IGNORECASE,
+)
+COMPANY_FORMS_RE = re.compile(
+    r"\b(?:ооо|оао|зао|пао|ао|ип|нко|ано|фгуп|гуп|муп|llc|ltd|inc|gmbh)\b|[«»\"'“”„]",
+    re.IGNORECASE,
+)
+YEARS_MISMATCH = 1.0
+EDITABLE = {
+    "desired_position": "Желаемая должность",
+    "city": "Город",
+    "total_years": "Стаж, лет",
+    "salary_amount": "Зарплата",
+    "relocation": "Переезд",
+    "skills": "Навыки",
+    "languages": "Языки",
+    "summary": "Кратко",
+}
+RELOCATION = {
+    "no_relocation": "не готов к переезду",
+    "relocation_possible": "переезд возможен",
+    "relocation_desirable": "хочет переехать",
+    "unknown": "в резюме не сказано",
+}
+
+
+class Position(BaseModel):
+    title: str = Field(description="Должность")
+    company: str | None = Field(None, description="Компания")
+    industry: str | None = Field(None, description="Отрасль компании")
+    start: str | None = Field(None, description="Начало: ГГГГ-ММ или ГГГГ")
+    end: str | None = Field(None, description="Конец: ГГГГ-ММ или ГГГГ; null, если работает сейчас")
+    is_current: bool = Field(False, description="Работает здесь сейчас («по н.в.»)")
+    team_size: int | None = Field(None, description="Сколько людей в подчинении")
+    quote: str | None = Field(
+        None, description="Дословный фрагмент резюме до 15 слов, откуда взята эта позиция"
+    )
+
+    @model_validator(mode="after")
+    def _current(self):
+        if self.end and CURRENT_RE.match(self.end):
+            self.is_current, self.end = True, None
+        return self
+
+
+class Education(BaseModel):
+    institution: str | None = None
+    degree: str | None = None
+    year: int | None = None
+
+
+class Salary(BaseModel):
+    amount: int | None = Field(None, description="Сумма в месяц, число без пробелов")
+    currency: str | None = Field(None, description="RUB, USD, EUR, KZT…")
+    kind: Literal["gross", "net", "unknown"] = Field(
+        "unknown", description="gross — до вычета налога, net — на руки"
+    )
+
+
+class CandidateProfile(BaseModel):
+    desired_position: str | None = Field(None, description="Желаемая должность из резюме")
+    positions: list[Position] = Field(
+        default_factory=list, description="Места работы, новые первыми"
+    )
+    skills: list[str] = Field(default_factory=list)
+    total_years: float | None = Field(None, description="Общий стаж в годах, как в резюме")
+    city: str | None = None
+    relocation: Literal[
+        "no_relocation", "relocation_possible", "relocation_desirable", "unknown"
+    ] = "unknown"
+    salary_expect: Salary | None = Field(None, description="Ожидаемая зарплата")
+    languages: list[str] = Field(default_factory=list)
+    education: list[Education] = Field(default_factory=list)
+    summary: str = Field("", description="Три предложения своими словами: кто это и чем силён")
+    summary_quote: str | None = Field(
+        None, description="Дословный фрагмент резюме до 15 слов, на котором основано summary"
+    )
+    resume_date: str | None = Field(None, description="Дата резюме ГГГГ-ММ-ДД, если видна")
+
+
+SYSTEM = """Ты разбираешь резюме кандидата для кадрового агентства и заполняешь схему.
+
+Правила:
+- Бери только то, что написано в резюме. Не выдумывай: нет данных — null или пустой список.
+- desired_position — желаемая должность, если она названа.
+- Места работы — от новых к старым. Даты — ГГГГ-ММ или ГГГГ.
+- Если работа идёт сейчас («по н.в.», «по н/в», «по настоящее время», «наст. время»,
+  «сейчас», «по сей день», «до сих пор»), ставь is_current = true и end = null.
+- total_years — общий стаж в годах, как он указан в резюме; не указан — null.
+- salary_expect — сумма в месяц числом, валюта, gross/net, если сказано.
+- relocation: no_relocation — не готов, relocation_possible — возможен,
+  relocation_desirable — хочет переехать, unknown — не сказано.
+- summary — три коротких предложения своими словами: кто это, опыт, чем силён.
+- quote у каждого места работы и summary_quote — дословный фрагмент резюме до 15 слов,
+  на котором основано значение. Копируй символ в символ, ничего не меняя.
+- Метки вида [ИМЯ], [ТЕЛЕФОН], [ПОЧТА], [ССЫЛКА], [ДАТА РОЖДЕНИЯ], [ДОКУМЕНТ] —
+  скрытые данные, не пытайся их восстановить."""
+
+
+def model_input(c: Candidate) -> str:
+    return anonymize(c.raw_text[:MAX_CHARS], c.full_name, c.phones, c.emails, c.links)
+
+
+def company_key(name: str | None) -> str | None:
+    """Код компании для сравнения: без ООО/АО/ИП, кавычек и регистра."""
+    if not name:
+        return None
+    return " ".join(COMPANY_FORMS_RE.sub(" ", name).lower().replace("ё", "е").split()) or None
+
+
+def _month(value: str | None, end: bool = False) -> int | None:
+    """«2019-03» → номер месяца от нулевого года; «2019» — январь (или декабрь для конца)."""
+    match = re.match(r"^\s*(\d{4})(?:-(\d{1,2}))?", value or "")
+    if not match:
+        return None
+    month = int(match.group(2) or (12 if end else 1))
+    return int(match.group(1)) * 12 + month - 1
+
+
+def years_by_positions(positions: list[dict], resume_date: date) -> float | None:
+    """Стаж по местам работы: пересечения объединяются, текущее — до даты резюме."""
+    spans = []
+    for p in positions:
+        start = _month(p.get("start"))
+        stop = resume_date.year * 12 + resume_date.month - 1 if p.get("is_current") else None
+        stop = stop if stop is not None else _month(p.get("end"), end=True)
+        if start is not None and stop is not None and stop >= start:
+            spans.append((start, stop + 1))
+    if not spans:
+        return None
+    total, cur_start, cur_stop = 0, *sorted(spans)[0]
+    for start, stop in sorted(spans)[1:]:
+        if start > cur_stop:
+            total += cur_stop - cur_start
+            cur_start, cur_stop = start, stop
+        else:
+            cur_stop = max(cur_stop, stop)
+    return round((total + cur_stop - cur_start) / 12, 1)
+
+
+def to_parsed(profile: CandidateProfile, c: Candidate) -> dict:
+    """Результат модели + проверки кода + прежние правки пользователя.
+
+    Цитаты сверяются с оригиналом (`quote_ok`), код компании и стаж считает код;
+    стаж модели остаётся только для сверки: расхождение больше года — «проверьте».
+    """
+    data = profile.model_dump()
+    for pos in data["positions"]:
+        pos["quote_ok"] = bool(pos["quote"] and quote_span(pos["quote"], c.raw_text))
+        pos["company_key"] = company_key(pos["company"])
+    data["summary_quote_ok"] = bool(
+        data["summary_quote"] and quote_span(data["summary_quote"], c.raw_text)
+    )
+    stated = data["total_years"]
+    counted = years_by_positions(data["positions"], c.resume_date or date.today())
+    data["total_years"] = counted if counted is not None else stated
+    data["total_years_stated"] = stated
+    data["total_years_check"] = (
+        stated is not None and counted is not None and abs(stated - counted) > YEARS_MISMATCH
+    )
+    salary = data.pop("salary_expect") or {}
+    data["salary_amount"] = salary.get("amount")
+    data["salary_currency"] = salary.get("currency")
+    data["salary_kind"] = salary.get("kind", "unknown")
+    edits = (c.parsed or {}).get("edits") or {}
+    for field, edit in edits.items():
+        data[field] = edit["value"]
+    data["edits"] = edits
+    return data
+
+
+def apply_edit(c: Candidate, field: str, raw: str) -> None:
+    """Правка пользователя: значение и отметка «исправлено вами <дата>»."""
+    if field in ("skills", "languages"):
+        value = [v.strip() for v in raw.split(",") if v.strip()]
+    elif field in ("total_years", "salary_amount"):
+        digits = re.sub(r"\s", "", raw).replace(",", ".")
+        value = float(digits) if field == "total_years" else int(float(digits))
+    else:
+        value = raw.strip()
+    parsed = dict(c.parsed or {})
+    parsed[field] = value
+    parsed["edits"] = {**parsed.get("edits", {}), field: {"value": value, "at": str(date.today())}}
+    c.parsed = parsed
+
+
+def start_parse(session: Session, ids: list[int]) -> Job:
+    session.query(Candidate).filter(Candidate.id.in_(ids)).update(
+        {Candidate.parse_status: "new", Candidate.parse_error: None}, synchronize_session=False
+    )
+    job = enqueue(session, "parse", {"ids": ids})
+    job.total = len(ids)
+    session.commit()
+    return job
+
+
+def waiting_ids(session: Session, limit: int | None = None) -> list[int]:
+    q = (
+        select(Candidate.id)
+        .where(Candidate.duplicate_of.is_(None), Candidate.parse_status == "new")
+        .order_by(Candidate.id)
+    )
+    return list(session.scalars(q.limit(limit) if limit else q))
+
+
+def estimate(session: Session, ids: list[int]) -> dict:
+    """Примерная цена и время разбора до старта: по числу символов и тарифу из настроек."""
+    chars = 0
+    for i in range(0, len(ids), 500):
+        part = ids[i : i + 500]
+        chars += session.scalar(
+            select(
+                func.coalesce(func.sum(func.min(func.length(Candidate.raw_text), MAX_CHARS)), 0)
+            ).where(Candidate.id.in_(part))
+        )
+    n = len(ids)
+    tokens_in = chars / 3 + n * (len(SYSTEM) / 3 + 900)  # 900 — схема ответа
+    tokens_out = n * 700
+    usd = (
+        tokens_in * config.number("price_parse_in") + tokens_out * config.number("price_parse_out")
+    ) / 1e6
+    rub = usd * config.number("usd_rub")
+    return {
+        "count": n,
+        "chars": chars,
+        "usd": usd,
+        "rub": rub,
+        "rub_low": rub * 0.7,
+        "rub_high": rub * 1.3,
+        "seconds_low": n * 1.2,  # 4 запроса параллельно, 5–10 с на ответ
+        "seconds_high": n * 2.5,
+    }
+
+
+def _ask(llm, text: str):
+    try:
+        return llm.complete_structured(CandidateProfile, SYSTEM, text)
+    except AuthError:
+        raise
+    except LLMError as exc:
+        return exc
+
+
+def _tick(job: Job) -> None:
+    """Точки «время — прогресс» за последние 15 минут: по ним считается остаток."""
+    now = time.time()
+    ticks = [t for t in job.payload.get("ticks", []) if now - t[0] <= 15 * 60]
+    job.payload = {**job.payload, "ticks": [*ticks, [now, job.progress]]}
+
+
+def run_parse(job_id: int) -> None:
+    llm = get_llm("parse")
+    with db.SessionLocal() as session:
+        job = session.get(Job, job_id)
+        ids = job.payload["ids"]
+        job.status, job.total = "running", len(ids)
+        _tick(job)
+        session.commit()
+        errors = job.error.splitlines() if job.error else []
+        with ThreadPoolExecutor(PARALLEL) as pool:
+            while job.progress < job.total:
+                session.refresh(job)
+                if stopping.is_set() or job.status == "paused":
+                    return
+                batch = [
+                    session.get(Candidate, i) for i in ids[job.progress : job.progress + BATCH]
+                ]
+                batch = [c for c in batch if c]
+                empty = [c for c in batch if len(c.raw_text.strip()) < MIN_CHARS]
+                todo = [c for c in batch if c not in empty]
+                try:
+                    results = list(pool.map(lambda t: _ask(llm, t), [model_input(c) for c in todo]))
+                except AuthError as exc:
+                    job.status, job.error = "failed", str(exc)
+                    job.finished_at = datetime.now()
+                    session.commit()
+                    return
+                for c in empty:
+                    c.parse_status, c.parse_error = "failed", "в резюме нет текста"
+                for c, result in zip(todo, results, strict=True):
+                    if isinstance(result, LLMError):
+                        c.parse_status, c.parse_error = "failed", str(result)
+                    else:
+                        c.parsed, c.parse_status, c.parse_error = (
+                            to_parsed(result, c),
+                            "parsed",
+                            None,
+                        )
+                        session.execute(delete(Embedding).where(Embedding.candidate_id == c.id))
+                errors += [f"{c.id}: {c.parse_error}" for c in batch if c.parse_status == "failed"]
+                job.progress = min(job.progress + BATCH, job.total)
+                job.error = "\n".join(errors) or None
+                job.payload = {
+                    **job.payload,
+                    "tokens_in": job.payload.get("tokens_in", 0) + llm.tokens_in,
+                    "tokens_out": job.payload.get("tokens_out", 0) + llm.tokens_out,
+                }
+                llm.tokens_in = llm.tokens_out = 0
+                _tick(job)
+                session.commit()
+        job.status, job.finished_at = "done", datetime.now()
+        _queue_embed(session)  # отпечатки для всех разобранных без отпечатка
+        session.commit()
+
+
+def _queue_embed(session: Session) -> None:
+    live = select(Job.id).where(Job.kind == "embed", Job.status.in_(("queued", "running")))
+    if session.scalar(live) is None:
+        enqueue(session, "embed", {})

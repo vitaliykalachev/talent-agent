@@ -1,0 +1,38 @@
+{
+ "match": "ООО «СКБ Контур»",
+ "response": {
+  "desired_position": "Python-разработчик",
+  "positions": [
+   {
+    "title": "Python-разработчик",
+    "company": "ООО «СКБ Контур»",
+    "industry": "ИТ",
+    "start": "2021-09",
+    "end": "сейчас",
+    "quote": "09.2021 — сейчас | ООО «СКБ Контур» | Python-разработчик"
+   },
+   {
+    "title": "Разработчик",
+    "company": "ООО «ИнфоТех»",
+    "start": "2018-06",
+    "end": "2021-08",
+    "quote": "06.2018 — 08.2021 | ООО «ИнфоТех» | Разработчик"
+   }
+  ],
+  "skills": [
+   "Python",
+   "PostgreSQL",
+   "Docker",
+   "Kafka"
+  ],
+  "total_years": 12,
+  "city": "Москва",
+  "relocation": "unknown",
+  "salary_expect": null,
+  "languages": [],
+  "education": [],
+  "summary": "Бэкенд-разработчик на Python. Пишет микросервисы на FastAPI. Переводил монолит на микросервисы.",
+  "summary_quote": "перевёл монолит на микросервисы",
+  "resume_date": null
+ }
+}

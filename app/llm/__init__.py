@@ -159,7 +159,8 @@ class OpenAILLM(LLM):
 
 
 class MockLLM(LLM):
-    """Ответы из фикстур `*.json`: {"match": "подстрока запроса", "response": {...}}.
+    """Ответы из фикстур `*.json`: {"match": "подстрока запроса", "response": {...}}
+    или список таких объектов в одном файле.
 
     Вместо "response" можно дать "responses": [...] — ответы по очереди на повторные
     вызовы; строка — «сырой» ответ (например, битый JSON), {"__error__": "network"} —
@@ -171,9 +172,10 @@ class MockLLM(LLM):
 
     def __init__(self, model: str, fixtures: str | Path):
         super().__init__(model)
-        self.fixtures = [
-            json.loads(p.read_text("utf-8")) for p in sorted(Path(fixtures).glob("*.json"))
-        ]
+        self.fixtures = []
+        for path in sorted(Path(fixtures).glob("*.json")):
+            data = json.loads(path.read_text("utf-8"))
+            self.fixtures += data if isinstance(data, list) else [data]
         self.served: Counter = Counter()
         self.calls: list[tuple[str, str]] = []
 

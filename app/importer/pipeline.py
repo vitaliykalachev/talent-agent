@@ -204,10 +204,11 @@ def process_document(session: Session, path: Path, batch_id: int | None = None) 
     """Добавляет текст файла к строке выгрузки или создаёт кандидата; возвращает ошибку."""
     try:
         text = document_text(path)
-    except Exception as exc:  # битый или нечитаемый файл не должен останавливать партию
-        return f"{path.name}: {type(exc).__name__}"
+    except Exception:  # битый или нечитаемый файл не должен останавливать партию
+        return f"{path.name}: файл повреждён"
     if not text:
-        return f"{path.name}: пустой файл"
+        reason = "скан без текста" if path.suffix.lower() == ".pdf" else "пустой файл"
+        return f"{path.name}: {reason}"
     owner = find_owner(session, path, text, batch_id)
     phones, emails, body = split_contacts(text)
     if owner:
