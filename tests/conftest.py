@@ -1,3 +1,10 @@
+import os
+
+# Тесты не читают рабочий .env и не ходят в сеть: провайдер и ключ задаются в самих тестах.
+os.environ["TA_ENV_FILE"] = os.devnull
+for _name in ("LLM_PROVIDER", "LLM_BASE_URL", "LLM_API_KEY", "LLM_MODEL_PARSE", "LLM_MODEL_EVAL"):
+    os.environ.pop(_name, None)
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
