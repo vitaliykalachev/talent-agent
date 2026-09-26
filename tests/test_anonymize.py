@@ -93,3 +93,47 @@ def test_twenty_demo_resumes_leak_nothing(demo_records):
         assert leaks(out, c) == [], (c.id, out[:300])
         assert extract_phones(out) == [] and not EMAIL_RE.search(out)
         assert "Дата рождения: [ДАТА РОЖДЕНИЯ]" in out or "Дата рождения" not in out
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "СИДОРОВ ПЁТР ИЛЬИЧ\nтокарь",  # капсом в шапке
+        "Резюме Сидорова Петра Ильича, токарь",  # родительный падеж, ё → е
+        "Sidorov Petr, turner; Sidorova team",  # латиница
+        "Pyotr Sidorov, токарь",
+        "Контакты: p.sidorov@mail.ru, @petr_sidorov, t.me/sidorov_p",  # логин почты и ник
+        "Отзыв: П. И. Сидоров — отличный токарь; Сидоров П.И. — ответственный",  # инициалы
+    ],
+)
+def test_record_name_removed_in_all_forms(text):
+    out = anonymize(text, "Сидоров Пётр Ильич")
+    assert not re.search(r"(?i)sidorov|сидоров|п[её]тр|pyotr|petr|ильич|\bП\.\s?И\.", out), out
+
+
+def test_documents_and_age_removed_but_experience_kept():
+    text = (
+        "ИНН 770708389312, СНИЛС 123-456-789 01, паспорт 45 12 345678. Мужчина, 35 лет. Стаж 12 лет"
+    )
+    out = anonymize(text)
+    assert out.count("[ДОКУМЕНТ]") == 3 and "[ТЕЛЕФОН]" not in out
+    assert "35" not in out and "Стаж 12 лет" in out
+
+
+def test_docx_author_and_file_name_not_in_text(tmp_path):
+    import zipfile
+
+    from app.demo import write_docx
+    from app.importer.readers import document_text
+
+    path = tmp_path / "Сидоров Пётр.docx"
+    write_docx(path, ["Токарь 6 разряда"])
+    core = (
+        '<?xml version="1.0" encoding="UTF-8"?><cp:coreProperties xmlns:cp="http://schemas.'
+        'openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/'
+        'dc/elements/1.1/"><dc:creator>Сидоров Пётр</dc:creator></cp:coreProperties>'
+    )
+    with zipfile.ZipFile(path, "a") as z:
+        z.writestr("docProps/core.xml", core)
+    text = document_text(path)
+    assert "Токарь" in text and "Сидоров" not in text
