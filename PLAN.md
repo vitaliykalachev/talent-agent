@@ -112,8 +112,11 @@ candidates          — id, external_id (id из CRM), raw_text, source_file, im
                       duplicate_of (id|null)
 embeddings          — candidate_id, model, vector (BLOB float32), created_at
 vacancies           — id, title, description, hard_filters (JSON), top_n,
+                      requirements (JSON: [{name, kind: must|nice, source: ai|user}]) —
+                      «Портрет кандидата»: до 6 обязательных и до 4 желательных,
                       created_at, schedule_enabled
-matches             — vacancy_id, candidate_id, score 0–100, reasons[],
+matches             — vacancy_id, candidate_id, score 0–100, prev_score,
+                      change_reason (new|resume_updated|vacancy_changed|null), reasons[],
                       concerns[], requirements[], questions[] (по схеме Evaluation),
                       evaluated_at, model, decision (invite|maybe|reject|null),
                       decision_reason
@@ -179,7 +182,7 @@ resume_date      — дата, если видна в тексте
   пара попадает в очередь «нужно проверить», объединяет пользователь одной кнопкой.
 - Устаревшая запись: дата резюме старше 18 месяцев или её нет — метка `stale`,
   в результатах по вакансии такие кандидаты показываются ниже с пометкой
-  «данные старше полутора лет, нужна проверка».
+  «Резюме от 12 мар 2024 — старше полутора лет, уточните на созвоне».
 
 ## 8. Поиск и оценка
 
