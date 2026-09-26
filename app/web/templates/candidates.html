@@ -34,6 +34,15 @@
       <option value="stale"{% if fresh == "stale" %} selected{% endif %}>Старше или без даты</option>
     </select>
   </div>
+  {% if batches %}
+  <div>
+    <label for="batch">Из загрузки…</label>
+    <select id="batch" name="batch">
+      <option value="">Из любой</option>
+      {% for id, label in batches %}<option value="{{ id }}"{% if id|string == batch %} selected{% endif %}>{{ label }}</option>{% endfor %}
+    </select>
+  </div>
+  {% endif %}
   <div>
     <label for="sort">Порядок</label>
     <select id="sort" name="sort">

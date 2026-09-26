@@ -29,6 +29,16 @@ DEFAULTS = {
     "price_eval_out": "10",
     "usd_rub": "84",
     "embed_model": "sergeyzh/BERTA",  # запасной вариант: intfloat/multilingual-e5-base
+    # Ночной прогон: время и дни (daily | weekdays); cron собирает app/schedule.py.
+    "night_time": "02:00",
+    "night_days": "daily",
+    # Почта для отчёта; без хоста и получателя письмо не отправляется.
+    "smtp_host": "",
+    "smtp_port": "587",
+    "smtp_user": "",
+    "smtp_password": "",
+    "smtp_to": "",
+    "public_url": "http://127.0.0.1:8000",  # адрес приложения для ссылок в письме
 }
 ENV = {
     "llm_provider": "LLM_PROVIDER",
@@ -38,6 +48,7 @@ ENV = {
     "llm_model_eval": "LLM_MODEL_EVAL",
     "llm_fixtures": "LLM_FIXTURES",
     "embed_model": "EMBED_MODEL",
+    "public_url": "TA_PUBLIC_URL",
 }
 
 

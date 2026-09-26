@@ -127,6 +127,25 @@ class Duplicate(Base):
     candidate_b: Mapped[int] = mapped_column(ForeignKey("candidates.id"), index=True)
     confidence: Mapped[float] = mapped_column(Float)
     status: Mapped[str] = mapped_column(String(16), default="open")  # open|merged|rejected
+    # Слияние обратимо: что было у основной записи до него и какие дубли переехали к ней.
+    snapshot: Mapped[dict | None] = mapped_column(JSON)
+    created_at: Mapped[datetime | None] = mapped_column(DateTime, default=now)
+    postponed_at: Mapped[datetime | None] = mapped_column(DateTime)  # «Отложить» — в конец
+
+
+class NightRun(Base):
+    """Ночной прогон: когда был запланирован, когда шёл, итог для «Утра» и письма."""
+
+    __tablename__ = "night_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    planned_at: Mapped[datetime | None] = mapped_column(DateTime)  # None — «Запустить сейчас»
+    started_at: Mapped[datetime | None] = mapped_column(DateTime)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime)
+    # queued | running | done | failed | missed (компьютер спал дольше запаса)
+    status: Mapped[str] = mapped_column(String(16), default="queued")
+    summary: Mapped[dict] = mapped_column(JSON, default=dict)
+    error: Mapped[str | None] = mapped_column(Text)
 
 
 class Job(Base):

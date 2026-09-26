@@ -1,7 +1,7 @@
 {% extends "base.html" %}
-{% block title %}Загрузка №{{ batch.id }} · Кадровый агент{% endblock %}
+{% block title %}{{ batch|batch_label }} · Кадровый агент{% endblock %}
 {% block content %}
-<h1>Загрузка №{{ batch.id }}</h1>
+<h1>{{ batch|batch_label }}</h1>
 <p class="sub">
   {% if batch.file_name %}Выгрузка «{{ batch.file_name }}»: {{ rows_count }} строк.{% endif %}
   Файлов резюме: {{ docs_count }}.

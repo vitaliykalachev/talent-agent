@@ -36,6 +36,10 @@
 </div>
 {% endif %}
 
+{% if pair %}
+<div class="callout warn"><p>Похоже на дубль другой записи. <a class="button ghost" href="/duplicates/{{ pair }}">Сравнить записи</a></p></div>
+{% endif %}
+
 <div class="status-line">
   <span class="pill {{ 'go' if c.parse_status == 'parsed' else 'stop' if c.parse_status == 'failed' else 'mid' }}">{{ PARSE_STATUS[c.parse_status] }}</span>
   {% if c.parse_status == "failed" and c.parse_error %}<small>{{ c.parse_error }}</small>{% endif %}
@@ -118,7 +122,8 @@
       {% else %}<p class="none">Ещё не оценивали ни по одной вакансии.</p>{% endif %}
       {% if merged %}
       <h4>Объединённые дубли</h4>
-      <ul>{% for m in merged %}<li><a href="/candidates/{{ m.id }}">{{ m.full_name or "Без имени" }}</a> <small>{{ m.resume_date|short_date }}</small></li>{% endfor %}</ul>
+      <ul>{% for m in merged %}<li><a href="/candidates/{{ m.id }}">{{ m.full_name or "Без имени" }}</a> <small>{{ m.resume_date|short_date }}</small>
+        {% if undo.get(m.id) %}<form method="post" action="/duplicates/{{ undo[m.id] }}/unmerge" class="inline"><button class="button ghost" type="submit">Отменить объединение</button></form>{% endif %}</li>{% endfor %}</ul>
       {% endif %}
     </section>
     <section class="pane source">

@@ -12,7 +12,7 @@ from app import evaluate as ev
 from app.llm import LLMError
 from app.models import Candidate, Feedback, Job, Match, Vacancy
 from app.web import present
-from app.web.routes import render
+from app.web.routes import render, templates
 
 router = APIRouter()
 
@@ -24,6 +24,7 @@ FEEDBACK_KINDS = {
 }
 REJECT_REASONS = ["Нет нужного опыта", "Зарплата", "Город", "Данные устарели", "Другое"]
 DECISIONS = {"invite": "Позвать", "maybe": "Под вопросом", "reject": "Не подходит"}
+templates.env.globals["FEEDBACK_KINDS"] = FEEDBACK_KINDS  # «Агент запомнил» в «Настройках»
 
 
 def _vacancy(s, vacancy_id: int) -> Vacancy:
@@ -104,6 +105,7 @@ async def vacancy_create(request: Request):
             description=description,
             hard_filters=_filters(form),
             top_n=_top_n(form),
+            schedule_enabled=form.get("schedule") == "1",
         )
         s.add(v)
         s.commit()
@@ -205,6 +207,7 @@ async def conditions_save(request: Request, vacancy_id: int):
         v = _vacancy(s, vacancy_id)
         v.hard_filters = _filters(form)
         v.top_n = _top_n(form, v.top_n)
+        v.schedule_enabled = form.get("schedule") == "1"
         s.commit()
     return RedirectResponse(f"/vacancies/{vacancy_id}", status_code=303)
 

@@ -4,9 +4,10 @@ import time
 from collections import Counter
 
 from markupsafe import Markup, escape
+from sqlalchemy import select
 
 from app.anonymize import quote_span
-from app.models import Candidate, Job
+from app.models import Candidate, ImportBatch, Job
 
 MONTHS = ["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"]
 NBSP = " "
@@ -89,6 +90,20 @@ def remaining(job: Job) -> str:
     rate = (ticks[-1][1] - ticks[0][1]) / (ticks[-1][0] - ticks[0][0])
     left = (job.total - job.progress) / rate
     return f"Осталось {duration(left * 0.85, left * 1.2)}"
+
+
+def batch_label(b: ImportBatch) -> str:
+    """«Загрузка 26 сен, 14:05 · crm_export.xlsx»."""
+    when = b.created_at
+    return (
+        f"Загрузка {when.day}{NBSP}{MONTHS[when.month - 1]}, {when:%H:%M} · "
+        f"{b.file_name or 'файлы резюме'}"
+    )
+
+
+def batch_labels(s, ids) -> dict[int, str]:
+    rows = s.scalars(select(ImportBatch).where(ImportBatch.id.in_([i for i in ids if i])))
+    return {b.id: batch_label(b) for b in rows}
 
 
 def stale_label(c: Candidate) -> str:

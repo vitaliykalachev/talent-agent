@@ -24,9 +24,16 @@ def _handlers():
     from app.embed import run_embed
     from app.evaluate import run_evaluate
     from app.importer.pipeline import run_import
+    from app.night import run_night
     from app.parse import run_parse
 
-    return {"import": run_import, "parse": run_parse, "embed": run_embed, "evaluate": run_evaluate}
+    return {
+        "import": run_import,
+        "parse": run_parse,
+        "embed": run_embed,
+        "evaluate": run_evaluate,
+        "night": run_night,
+    }
 
 
 def enqueue(session: Session, kind: str, payload: dict) -> Job:

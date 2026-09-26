@@ -65,7 +65,7 @@
     {% if v.hard_filters.min_years %} · стаж от {{ "%g"|format(v.hard_filters.min_years) }} лет{% endif %}
     {% if v.hard_filters.max_salary %} · зарплата до {{ v.hard_filters.max_salary|num }} ₽{% endif %}
     {% if v.hard_filters.fresh %} · резюме свежее полутора лет{% endif %}{% endif %}
-    · показать {{ v.top_n }}</summary>
+    · показать {{ v.top_n }}{% if v.schedule_enabled %} · оценивать каждую ночь{% endif %}</summary>
   <form class="settings" method="post" action="/vacancies/{{ v.id }}/conditions">
     <div class="grid2">
       <div><label for="city">Город</label><input id="city" type="text" name="city" value="{{ v.hard_filters.city or '' }}"></div>
@@ -75,6 +75,7 @@
     </div>
     <label for="top_n">Сколько кандидатов показать</label>
     <input id="top_n" type="number" min="1" max="200" name="top_n" value="{{ v.top_n }}">
+    <label><input type="checkbox" name="schedule" value="1"{% if v.schedule_enabled %} checked{% endif %}> Оценивать каждую ночь</label>
     <button class="button" type="submit">Сохранить условия</button>
   </form>
 </details>
