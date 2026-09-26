@@ -9,3 +9,6 @@ data/
 .ruff_cache/
 models/
 .DS_Store
+.gstack/
+.claude/
+.gstack/
