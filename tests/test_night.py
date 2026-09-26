@@ -113,7 +113,7 @@ def test_runs_at_two_and_once_after_sleep_with_reason(scheduler, session):
     # запустить сейчас.
     tick(scheduler, datetime(2026, 10, 2, 9, 30))
     third = runs(session)[2]
-    assert third.status == "missed"
+    assert third.status == "missed" and third.summary["error"] == third.error
     assert third.error == (
         "Ночной прогон в 02:00 не состоялся: компьютер спал или был выключен до 09:30."
     )

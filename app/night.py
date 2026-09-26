@@ -46,15 +46,14 @@ def enqueue(planned_at: datetime | None = None, fired_at: datetime | None = None
 
 
 def record_missed(planned_at: datetime, woke_at: datetime) -> None:
+    reason = (
+        f"Ночной прогон в {hhmm(planned_at)} не состоялся: компьютер спал или "
+        f"был выключен до {hhmm(woke_at)}."
+    )
     with db.SessionLocal() as s:
         s.add(
             NightRun(
-                planned_at=planned_at,
-                status="missed",
-                error=(
-                    f"Ночной прогон в {hhmm(planned_at)} не состоялся: компьютер спал или "
-                    f"был выключен до {hhmm(woke_at)}."
-                ),
+                planned_at=planned_at, status="missed", error=reason, summary={"error": reason}
             )
         )
         s.commit()
@@ -223,6 +222,7 @@ def run_night(job_id: int) -> None:
             s.rollback()
             run = s.get(NightRun, run.id)
             run.status, run.error = "failed", f"Ночной прогон не получился: {exc}"
+            summary["error"] = run.error
         run.finished_at = datetime.now()
         run.summary = dict(summary)  # письмо строится из итога, поэтому сначала итог
         run.summary = {**summary, "mail": mail.send_report(run)}
