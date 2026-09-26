@@ -186,6 +186,7 @@ class MockLLM(LLM):
     """Ответы из фикстур `*.json`: {"match": "подстрока запроса", "response": {...}}
     или список таких объектов в одном файле.
 
+    Поле "schema" (имя Pydantic-схемы) ограничивает ответ запросами этой схемы.
     Вместо "response" можно дать "responses": [...] — ответы по очереди на повторные
     вызовы; строка — «сырой» ответ (например, битый JSON), {"__error__": "network"} —
     сетевой сбой, {"__error__": 529} — ответ сервиса с этим кодом. Объём текста считается
@@ -213,7 +214,15 @@ class MockLLM(LLM):
     def _call(self, schema, system, user):
         with self._lock:
             self.calls.append((system, user))
-            index = next((i for i, f in enumerate(self.fixtures) if f["match"] in user), None)
+            # Ответ под схему запроса важнее общего: у оценки и разбора одного резюме
+            # совпадает текст, различает их поле "schema" в фикстуре.
+            found = [
+                i
+                for i, f in enumerate(self.fixtures)
+                if f["match"] in user and f.get("schema", schema.__name__) == schema.__name__
+            ]
+            found.sort(key=lambda i: "schema" not in self.fixtures[i])
+            index = found[0] if found else None
             if index is None:
                 return "{}"
             fixture = self.fixtures[index]
