@@ -497,3 +497,30 @@ def test_guard_nothing_personal_reaches_model(session, base, mock):
         for text in mock.calls:
             assert leaks(text, c) == [], (c.full_name, text[:300])
     assert "2| Тел.: [ТЕЛЕФОН], [ПОЧТА]" in next(t for t in mock.calls if "Литейный завод" in t)
+
+
+def _checks(musts: list[str], nices: list[str]) -> list[dict]:
+    kinds = [("must", v) for v in musts] + [("nice", v) for v in nices]
+    return [
+        {
+            "requirement_id": f"r{i}",
+            "name": f"требование {i}",
+            "kind": kind,
+            "weight": ev.WEIGHTS[kind],
+            "verdict": verdict,
+            "evidence_lines": None if verdict == "no_data" else [1, 1],
+        }
+        for i, (kind, verdict) in enumerate(kinds, start=1)
+    ]
+
+
+def test_maybe_needs_at_least_half_of_must_requirements():
+    """Решение по этапу 3: «Можно рассмотреть» — только если хотя бы половина
+    обязательных «есть» или «частично», иначе «Скорее не подходят»."""
+    one_of_five = _checks(["met", "no_data", "no_data", "no_data", "no_data"], ["met"] * 4)
+    assert ev.score(one_of_five) >= ev.MAYBE_FROM  # по баллу прошёл бы
+    assert category_of(one_of_five) == ev.UNFIT
+    half = _checks(["met", "partial", "no_data", "no_data"], ["met"] * 4)
+    assert ev.score(half) >= ev.MAYBE_FROM and category_of(half) == ev.MAYBE
+    below_half = _checks(["partial", "no_data", "no_data"], ["met"] * 4)
+    assert category_of(below_half) == ev.UNFIT

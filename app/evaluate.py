@@ -497,7 +497,8 @@ def category(m: Match) -> str:
     подтверждено большинство желательных; «Можно рассмотреть» — обязательные есть, по
     части желательных нет подтверждения. Где правила не решают (обязательное частично
     или без данных, вакансия без обязательных), работают пороги 75 и 55 — но без всех
-    обязательных выше «Можно рассмотреть» кандидат не поднимается."""
+    обязательных выше «Можно рассмотреть» кандидат не поднимается, а «Можно рассмотреть»
+    требует хотя бы половины обязательных «есть» или «частично»."""
     if m.status != "ok" or m.score is None:
         return FAILED
     if vetoed(m.checks):
@@ -509,6 +510,8 @@ def category(m: Match) -> str:
         return FIT if not nice or confirmed > len(nice) / 2 else MAYBE
     if not must and m.score >= FIT_FROM:
         return FIT
+    if 2 * sum(ch["verdict"] in ("met", "partial") for ch in must) < len(must):
+        return UNFIT  # меньше половины обязательных хотя бы частично — не «Можно рассмотреть»
     return MAYBE if m.score >= MAYBE_FROM else UNFIT
 
 
