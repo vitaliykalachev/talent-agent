@@ -56,7 +56,7 @@ class LLM:
         for attempt in (1, 2):
             raw = self._send(schema, system, prompt)
             try:
-                return schema.model_validate(json.loads(raw) if isinstance(raw, str) else raw)
+                return _validate(schema, json.loads(raw) if isinstance(raw, str) else raw)
             except (ValueError, ValidationError) as exc:
                 if attempt == 2:
                     raise LLMError("ответ модели не по форме") from exc
@@ -92,6 +92,46 @@ class LLM:
 
     def _call(self, schema: type[BaseModel], system: str, user: str) -> dict | str:
         raise NotImplementedError
+
+
+NESTED = {"model_type", "list_type", "dict_type", "model_attributes_type"}
+
+
+def _loads(text: str):
+    """Вложенный объект, который модель прислала строкой: "None", "null", '{"a": 1}',
+    '[{"end": None, "is_current": true}]'."""
+    text = text.strip()
+    if text in ("", "None", "null"):
+        return None
+    try:
+        return json.loads(re.sub(r"\bNone\b", "null", text))
+    except ValueError:
+        return text
+
+
+def _validate(schema: type[BaseModel], data):
+    """Проверка по схеме. Если модель прислала вложенный объект или список строкой (так
+    бывает в ответах через инструмент), такие поля — и только они — разбираются из строки,
+    и проверка повторяется без нового запроса."""
+    try:
+        return schema.model_validate(data)
+    except ValidationError as exc:
+        fixed = False
+        for error in exc.errors():
+            *path, key = error["loc"]
+            parent = data
+            for step in path:
+                parent = parent[step] if isinstance(parent, (dict, list)) else None
+            if (
+                error["type"] in NESTED
+                and isinstance(parent, (dict, list))
+                and isinstance(parent[key], str)
+                and parent[key] != (value := _loads(parent[key]))
+            ):
+                parent[key], fixed = value, True
+        if not fixed:
+            raise
+        return schema.model_validate(data)
 
 
 class AnthropicLLM(LLM):

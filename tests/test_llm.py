@@ -36,6 +36,38 @@ def test_invalid_json_is_retried_once_with_error_text(tmp_path):
     assert "не прошёл проверку" in model.calls[1][1]
 
 
+class Salary(BaseModel):
+    amount: int | None = None
+
+
+class Nested(BaseModel):
+    title: str
+    salary: Salary | None = None
+    jobs: list[Salary] = []
+
+
+@pytest.mark.parametrize(
+    "salary,jobs",
+    [
+        ("None", "[]"),
+        ("null", '[{"amount": None}, {"amount": 5}]'),
+        ('{"amount": 7}', "[]"),
+    ],
+)
+def test_nested_object_sent_as_string_is_repaired_without_new_request(tmp_path, salary, jobs):
+    """Живой разбор через хаб: модель иногда присылает вложенный объект строкой."""
+    (tmp_path / "a.json").write_text(
+        json.dumps(
+            {"match": "технолог", "response": {"title": "[ИМЯ]", "salary": salary, "jobs": jobs}}
+        ),
+        "utf-8",
+    )
+    model = MockLLM("test", tmp_path)
+    answer = model.complete_structured(Nested, "s", "технолог")
+    assert answer.title == "[ИМЯ]"  # строковое поле не трогаем, даже если похоже на список
+    assert len(model.calls) == 1
+
+
 def test_second_invalid_answer_fails(tmp_path):
     model = mock(tmp_path, responses=[{"title": "Т"}, {"years": "много"}])
     with pytest.raises(LLMError, match="не по форме"):

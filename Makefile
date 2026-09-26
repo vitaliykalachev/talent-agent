@@ -1,4 +1,4 @@
-.PHONY: run test test-fast lint demo eval
+.PHONY: run test test-fast lint demo eval eval-parse
 
 run:
 	uv run app
@@ -22,3 +22,8 @@ demo:
 # Набор проверки: Recall@40, Recall@200, nDCG@10 для вектора, BM25 и гибрида.
 eval:
 	uv run python -m eval.run data/eval
+
+# Эталон разбора: 30 демо-резюме через модель из настроек, F1 по полям. Нужен ключ.
+eval-parse:
+	rm -rf data/parse-check
+	uv run python -m eval.parse_check data/parse-check

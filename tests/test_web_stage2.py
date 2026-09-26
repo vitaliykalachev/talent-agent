@@ -40,8 +40,8 @@ def test_trial_parse_offer_confirm_and_preview(web, five, session):  # noqa: F81
     assert re.search(r'data-stat="waiting">\s*5\s*<', home)
 
     confirm = page(web, "/parse", params={"scope": "trial"})
-    # живой замер ревью: 5 резюме ≈ 60 с
-    assert "Разберём 5 резюме. Займёт 1 минуту, будет стоить примерно" in confirm
+    # живой замер: 5 резюме за 16–20 с — два захода по 4 запроса, 16–40 с
+    assert "Разберём 5 резюме. Займёт меньше минуты, будет стоить примерно" in confirm
     assert "₽" in confirm and "оригиналы остаются у вас" in confirm
     assert "Показать, что уходит модели" in confirm
 
