@@ -15,7 +15,7 @@
 import re
 from functools import lru_cache
 
-from app.importer.normalize import EMAIL_RE, PHONE_RE
+from app.importer.normalize import EMAIL_RE, PHONE_RE, find_name, latin_name, to_cyrillic
 
 NAME, PHONE, EMAIL, LINK = "[ИМЯ]", "[ТЕЛЕФОН]", "[ПОЧТА]", "[ССЫЛКА]"
 BIRTH, DOCUMENT = "[ДАТА РОЖДЕНИЯ]", "[ДОКУМЕНТ]"
@@ -37,7 +37,7 @@ DOCUMENT_RE = re.compile(
 MONTHS = r"(?:январ|феврал|март|апрел|ма[йя]|июн|июл|август|сентябр|октябр|ноябр|декабр)[а-я]*"
 DATE_VALUE = rf"(?:\d{{1,2}}[./-]\d{{1,2}}[./-]\d{{2,4}}|\d{{1,2}}\s+{MONTHS}\s+\d{{4}}|\d{{4}})"
 BIRTH_RE = re.compile(
-    rf"((?:дата\s+рождения|д\.\s?р\.|родил(?:ся|ась)|год\s+рождения)\s*:?\s*)"
+    rf"((?:дата\s+рожд(?:ения|\.)?|д\.\s?р\.|г\.\s?р\.|родил(?:ся|ась)|год\s+рождения)\s*:?\s*)"
     rf"{DATE_VALUE}(?:\s*г(?:ода|\.)?)?"
     r"|\b\d{4}\s*г\.?\s*р\.?"
     r"|((?:возраст|мужчина|женщина|муж\.|жен\.)\s*[:,]?\s*)\d{2}\s*(?:год|года|лет)\b",
@@ -51,7 +51,7 @@ LATIN = {
     "ж": "(?:zh|j)", "з": "z", "и": "i", "й": "(?:y|i|j)", "к": "k", "л": "l", "м": "m",
     "н": "n", "о": "o", "п": "p", "р": "r", "с": "s", "т": "t", "у": "u", "ф": "f",
     "х": "(?:kh|h|x)", "ц": "(?:ts|tc|c|cz)", "ч": "ch", "ш": "sh", "щ": "(?:shch|sch)",
-    "ъ": "", "ы": "(?:y|i)", "ь": "", "э": "e", "ю": "(?:yu|iu|ju)", "я": "(?:ya|ia|ja)",
+    "ъ": "", "ы": "(?:y|i)", "ь": "y?", "э": "e", "ю": "(?:yu|iu|ju)", "я": "(?:ya|ia|ja|a)",
 }  # fmt: skip
 
 
@@ -94,7 +94,7 @@ def _line_person_spans(line: str) -> list[tuple[int, int]]:
 def _digits_pattern(phone: str) -> str:
     """Номер записи в любом оформлении: последние 10 цифр с любыми разделителями."""
     digits = re.sub(r"\D", "", phone)[-10:]
-    return r"[\s\-()]*".join(digits)
+    return r"[\s\-().]*".join(digits)
 
 
 def _forms(part: str) -> set[str]:
@@ -147,8 +147,18 @@ def anonymize(text: str, full_name: str | None = None, phones=(), emails=(), lin
     text = PHONE_RE.sub(_phone_or_keep, text)
     for phone in phones:
         text = re.sub(_digits_pattern(phone), PHONE, text)
-    # 3. ФИО записи во всех формах
-    text = _remove_name(text, full_name)
+    # 3. ФИО записи во всех формах; нет ФИО у записи — берём из шапки резюме
+    latin = latin_name(text)
+    if latin:
+        text = _remove_name(text, " ".join(to_cyrillic(w) for w in latin.split()))
+        for word in latin.split():
+            text = re.sub(
+                rf"(?<![A-Za-z]){re.escape(word)}[a-z]{{0,4}}(?![A-Za-z])",
+                NAME,
+                text,
+                flags=re.IGNORECASE,
+            )
+    text = _remove_name(text, full_name or find_name(text))
     # 4. NER построчно
     lines = text.split("\n")
     for i, line in enumerate(lines):

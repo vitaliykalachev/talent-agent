@@ -3,6 +3,7 @@ import re
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from test_parse import FIXTURES, five, parse_all, sent  # noqa: F401 — фикстуры
 
 from app import config
@@ -54,6 +55,26 @@ def test_trial_parse_offer_confirm_and_preview(web, five, session):  # noqa: F81
     home = page(web, "/")
     assert re.search(r'data-stat="parsed">\s*5\s*<', home)
     assert "Разбор резюме: Готово" in page(web, "/progress")
+
+
+def test_double_click_starts_one_parse(web, five, session, sent):  # noqa: F811
+    """Два одновременных «Разобрать для проверки» — одна задача и по вызову на резюме."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(2) as pool:
+        codes = list(
+            pool.map(
+                lambda _: (
+                    web.post("/parse", data={"scope": "trial"}, follow_redirects=False).status_code
+                ),
+                range(2),
+            )
+        )
+    assert codes == [303, 303]
+    web.post("/parse", data={"scope": "all"}, follow_redirects=False)  # и «всей базы» следом
+    assert len(list(session.scalars(select(Job).where(Job.kind == "parse")))) == 1
+    run_pending()
+    assert len(sent) == 5
 
 
 def test_pause_and_resume_buttons(web, session):

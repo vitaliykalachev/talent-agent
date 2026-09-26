@@ -8,16 +8,36 @@ from app.anonymize import anonymize, quote_span
 from app.importer.normalize import EMAIL_RE, extract_phones
 from app.models import Candidate
 
+# Своя таблица латиницы для сторожа, независимая от обезличивания: у буквы несколько
+# распространённых написаний, основа слова без последней буквы ловит падежи.
+GUARD_LATIN = {
+    "а": "a", "б": "b", "в": "v", "г": "g", "д": "d", "е": "(?:e|ye)", "ё": "(?:e|yo|jo)",
+    "ж": "(?:zh|j)", "з": "z", "и": "i", "й": "(?:y|i|j)", "к": "k", "л": "l", "м": "m",
+    "н": "n", "о": "o", "п": "p", "р": "r", "с": "s", "т": "t", "у": "u", "ф": "f",
+    "х": "(?:kh|h)", "ц": "(?:ts|c)", "ч": "ch", "ш": "sh", "щ": "(?:shch|sch)", "ъ": "",
+    "ы": "(?:y|i)", "ь": "y?", "э": "e", "ю": "(?:yu|ju|iu)", "я": "(?:ya|ja|ia|a)",
+}  # fmt: skip
+
 
 def leaks(text: str, c: Candidate) -> list[str]:
-    """Что из контактов и ФИО записи осталось в тексте."""
+    """Что из контактов и ФИО записи осталось в тексте: телефоны — по цифрам (с любыми
+    разделителями, в том числе точками), ФИО — по основе слова в любом падеже, с ё и
+    латиницей."""
     found = []
     digits = re.sub(r"\D", "", text)
     found += [p for p in c.phones if p[-10:] in digits]
     found += [e for e in c.emails if e.lower() in text.lower()]
+    plain = text.lower().replace("ё", "е")
     for part in (c.full_name or "").split():
-        if len(part) > 2 and re.search(rf"(?<!\w){re.escape(part)}(?!\w)", text, re.I):
+        word = part.lower().replace("ё", "е")
+        if len(word) < 3 or "." in word:
+            continue
+        stem = word[:-1] if len(word) > 4 else word
+        if re.search(rf"(?<!\w){re.escape(stem)}", plain):
             found.append(part)
+        latin = "".join(GUARD_LATIN.get(ch, re.escape(ch)) for ch in part.lower()[: len(stem)])
+        if re.search(rf"(?<![a-z]){latin}", plain):
+            found.append(f"{part} латиницей")
     return found
 
 
@@ -47,6 +67,49 @@ def test_dirty_resume_has_no_contacts_names_links_or_birth_date():
 )
 def test_cis_phones_removed(phone):
     assert anonymize(f"Тел.: {phone}; опыт 5 лет") == "Тел.: [ТЕЛЕФОН]; опыт 5 лет"
+
+
+@pytest.mark.parametrize(
+    "text,name,phones",
+    [
+        ("Тел. 8.999.123.45.67, токарь", None, ()),  # телефон с точками по шаблону
+        ("Звонить: 8.999.123.45.67", "Сидоров Пётр", ["+79991234567"]),  # номер записи
+        ("+7.999.123.45.67 — рабочий", None, ()),
+    ],
+)
+def test_phone_with_dots_removed(text, name, phones):
+    out = anonymize(text, name, phones)
+    assert "[ТЕЛЕФОН]" in out and "123" not in out, out
+
+
+@pytest.mark.parametrize(
+    "text", ["Дата рожд.: 01.01.1980, токарь", "г.р. 1980, токарь", "Г. р.: 1980, токарь"]
+)
+def test_birth_date_short_forms_removed(text):
+    out = anonymize(text)
+    assert "1980" not in out and "[ДАТА РОЖДЕНИЯ]" in out and "токарь" in out, out
+
+
+def test_latin_name_from_header_removed_without_record_name():
+    """У записи нет ФИО (файл без строки выгрузки): имя берётся из шапки резюме."""
+    text = "Sidorov Petr Ilyich\nТокарь 6 разряда\nРекомендую: Сидоров П. И. — Sidorova team"
+    out = anonymize(text)
+    assert not re.search(r"(?i)sidorov|petr|ilyich|сидоров", out), out
+    assert "Токарь 6 разряда" in out
+
+
+def test_record_first_name_caught_in_latin():
+    out = anonymize("Julia, главный бухгалтер; Юлии позвонить, Yulia на связи", "Юлия")
+    assert not re.search(r"(?i)julia|yulia|юли", out) and "главный бухгалтер" in out, out
+
+
+def test_guard_catches_what_it_should():
+    """Сторож не пустой: падеж, латиница и телефон с точками — это утечки."""
+    c = Candidate(full_name="Сидоров Пётр", phones=["+79991234567"], emails=[])
+    assert leaks("Резюме Сидорова", c) == ["Сидоров"]
+    assert leaks("Petr S., токарь", c) == ["Пётр латиницей"]
+    assert leaks("тел 8.999.123.45.67", c) == ["+79991234567"]
+    assert leaks("Токарь, опыт 12 лет", c) == []
 
 
 def test_record_name_removed_even_if_ner_misses_it():

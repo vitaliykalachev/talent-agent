@@ -54,6 +54,42 @@ def test_network_error_retried_up_to_three_times(tmp_path):
         model.complete_structured(Answer, "s", "технолог")
 
 
+def test_overload_retried_then_refusal_is_human_text(tmp_path):
+    busy = {"__error__": 529}
+    model = mock(tmp_path, responses=[busy, busy, {"title": "Т", "years": 2}])
+    assert model.complete_structured(Answer, "s", "технолог").years == 2
+    model = mock(tmp_path, responses=[{"__error__": 400}, {"title": "Т", "years": 2}])
+    with pytest.raises(LLMError, match="отклонил запрос \\(код 400\\)"):
+        model.complete_structured(Answer, "s", "технолог")
+    assert len(model.calls) == 1  # отказ не повторяется
+
+
+@pytest.mark.parametrize("code,retried", [(529, True), (503, True), (500, True), (404, False)])
+def test_sdk_status_errors_classified(monkeypatch, code, retried):
+    """Настоящие классы SDK: 529 (OverloadedError) — не InternalServerError, но повторяется."""
+    import anthropic
+    import httpx
+
+    model = llm.AnthropicLLM("m", "http://hub.local", "k")
+    response = httpx.Response(code, request=httpx.Request("POST", "http://hub.local"))
+    calls = []
+
+    def fail(*_):
+        calls.append(1)
+        raise model.client._make_status_error("сбой", body=None, response=response)
+
+    monkeypatch.setattr(model, "_call", fail)
+    with pytest.raises(LLMError) as err:
+        model.complete_structured(Answer, "s", "технолог")
+    assert len(calls) == (llm.NETWORK_RETRIES + 1 if retried else 1)
+    assert "Error" not in str(err.value)  # русский текст, а не имя исключения
+    if code == 529:
+        assert isinstance(
+            model.client._make_status_error("x", body=None, response=response),
+            anthropic.OverloadedError,
+        )
+
+
 def test_bad_key_gives_human_message(tmp_path):
     model = mock(tmp_path, response={"__error__": "auth"})
     with pytest.raises(AuthError, match="Ключ доступа не подошёл"):

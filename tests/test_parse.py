@@ -82,6 +82,22 @@ def test_five_professions_parsed_with_current_positions(five, session):
     assert five["finance.txt"].parsed["languages"] == ["английский B2"]
 
 
+def test_overloaded_service_on_one_resume_does_not_stop_parse(five, session, tmp_path):
+    """Ответ 529 на одном резюме: оно уходит в «не удалось», остальные разобраны."""
+    import shutil
+
+    folder = tmp_path / "llm"
+    shutil.copytree(FIXTURES / "llm", folder)
+    busy = {"match": "ООО «СКБ Контур»", "response": {"__error__": 529}}
+    (folder / "it.json").write_text(json.dumps(busy), encoding="utf-8")
+    config.save({"llm_fixtures": str(folder)})
+    job = parse_all(session)
+    assert job.status == "done"
+    assert job.error == f"{five['it.txt'].id}: сервис ИИ не ответил"
+    assert five["it.txt"].parse_status == "failed"
+    assert sum(c.parse_status == "parsed" for c in five.values()) == 4
+
+
 def test_guard_nothing_personal_reaches_model(five, session, sent):
     parse_all(session)
     assert len(sent) == 5

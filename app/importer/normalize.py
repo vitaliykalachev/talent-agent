@@ -9,12 +9,12 @@ STALE_AFTER = timedelta(days=548)  # 18 месяцев
 CIS_CODES = ("375", "380", "998", "996", "994", "995", "992", "993", "374", "373")
 PHONE_RE = re.compile(
     # международный с «+»: +44 20 7946 0958, +375 (29) 123-45-67, +7(495)1234567
-    r"\+\d{1,3}(?:[ \-]?\(?\d{2,7}\)?){2,5}(?!\d)"
+    r"\+\d{1,3}(?:[ \-.]?\(?\d{2,7}\)?){2,5}(?!\d)"
     # СНГ без «+»: 375 29 123 45 67
     rf"|(?<![\d\w])(?:{'|'.join(CIS_CODES)})"
-    r"[ \-]?\(?\d{2,3}\)?[ \-]?\d{3}[ \-]?\d{2}[ \-]?\d{2}(?!\d)"
-    # РФ и Казахстан: 8 (912) 345-67-89, 9123456789
-    r"|(?<![\d\w])(?:8|7)?[\s\-(]*\d{3}[\s\-)]*\d{3}[\s\-]*\d{2}[\s\-]*\d{2}(?!\d)"
+    r"[ \-.]?\(?\d{2,3}\)?[ \-.]?\d{3}[ \-.]?\d{2}[ \-.]?\d{2}(?!\d)"
+    # РФ и Казахстан: 8 (912) 345-67-89, 9123456789, 8.999.123.45.67
+    r"|(?<![\d\w])(?:8|7)?[\s\-(.]*\d{3}[\s\-).]*\d{3}[\s\-.]*\d{2}[\s\-.]*\d{2}(?!\d)"
 )
 EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)*\.[a-zа-я]{2,}", re.IGNORECASE)
 DATE_RE = re.compile(r"\b(\d{1,2})[./](\d{1,2})[./](\d{4})\b|\b(\d{4})-(\d{2})-(\d{2})\b")
@@ -175,6 +175,39 @@ CITY_RE = re.compile(
 def extract_city(text: str) -> str | None:
     match = CITY_RE.search(text or "")
     return normalize_city(match.group(1)) if match else None
+
+
+LATIN_NAME_RE = re.compile(r"^[A-Z][a-z]+(?:[ -][A-Z][a-z]+){1,2}$|^[A-Z]+(?: [A-Z]+){1,2}$")
+LATIN_TO_CYR = [
+    ("shch", "щ"), ("sch", "щ"), ("yo", "ё"), ("zh", "ж"), ("kh", "х"), ("ch", "ч"),
+    ("sh", "ш"), ("ts", "ц"), ("tc", "ц"), ("yu", "ю"), ("ju", "ю"), ("iu", "ю"),
+    ("ya", "я"), ("ja", "я"), ("ia", "ия"), ("ye", "е"), ("x", "кс"), ("a", "а"),
+    ("b", "б"), ("v", "в"), ("w", "в"), ("g", "г"), ("d", "д"), ("e", "е"), ("z", "з"),
+    ("i", "и"), ("j", "й"), ("k", "к"), ("q", "к"), ("c", "к"), ("l", "л"), ("m", "м"),
+    ("n", "н"), ("o", "о"), ("p", "п"), ("r", "р"), ("s", "с"), ("t", "т"), ("u", "у"),
+    ("f", "ф"), ("h", "х"),
+]  # fmt: skip
+
+
+def to_cyrillic(word: str) -> str:
+    """Латиница → кириллица в нижнем регистре: Sergey → сергей, Ilyich → ильич."""
+    word = word.lower()
+    word = re.sub(
+        r"(?<=[aeiou])y\b|iy\b|ii\b", lambda m: "ий" if len(m.group()) == 2 else "й", word
+    )
+    soft = {"a": "ья", "u": "ью", "o": "ьё", "e": "ье", "i": "ьи"}  # Ilyich, Natalya
+    word = re.sub(r"(?<=[bcdfghklmnprstvz])y([aeiou])", lambda m: soft[m.group(1)], word)
+    for lat, cyr in LATIN_TO_CYR:
+        word = word.replace(lat, cyr)
+    return word.replace("y", "ы")
+
+
+def latin_name(text: str, lines: int = 5) -> str | None:
+    """ФИО латиницей из шапки резюме («Sidorov Petr Ilyich»), если это отдельная строка."""
+    for line in [ln.strip(" #*_|-:\t") for ln in (text or "").splitlines() if ln.strip()][:lines]:
+        if LATIN_NAME_RE.match(line):
+            return line
+    return None
 
 
 def find_name(text: str, lines: int = 5) -> str | None:

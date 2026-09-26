@@ -6,8 +6,10 @@ Anthropic Messages API (в том числе прокси ClaudeHub), и OpenAI-
 Библиотеку instructor не берём: повтор с указанием на ошибку и учёт объёма текста
 укладываются в тонкий слой ниже, а мок идёт тем же путём проверки, что и живые модели.
 
-Сетевой сбой повторяется до трёх раз с паузой; ответ не по схеме — один раз, с
-текстом ошибки в запросе.
+Временный сбой — сеть, тайм-аут, 429, 5xx и перегрузка 529 — повторяется до трёх раз с
+паузой; прочие отказы сервиса (4xx) сразу становятся `LLMError` с понятным текстом:
+запись уходит в «не удалось», задача идёт дальше. Ответ не по схеме повторяется один
+раз, с текстом ошибки в запросе.
 """
 
 import json
@@ -34,11 +36,13 @@ class AuthError(LLMError):
 
 
 AUTH_MESSAGE = "Ключ доступа не подошёл. Проверьте, что скопировали его целиком."
+BUSY_MESSAGE = "сервис ИИ не ответил"
 
 
 class LLM:
-    network_errors: tuple = ()
+    network_errors: tuple = ()  # временные: повторяем
     auth_errors: tuple = ()
+    status_errors: tuple = ()  # прочие ответы с кодом: 5xx повторяем, остальное — отказ
 
     def __init__(self, model: str):
         self.model = model
@@ -67,9 +71,16 @@ class LLM:
                 return self._call(schema, system, user)
             except self.auth_errors as exc:
                 raise AuthError(AUTH_MESSAGE) from exc
-            except self.network_errors as exc:
+            except (*self.network_errors, *self.status_errors) as exc:
+                code = getattr(exc, "status_code", None)
+                if isinstance(exc, self.status_errors) and not isinstance(exc, self.network_errors):
+                    if code is None or code < 500:
+                        raise LLMError(
+                            f"сервис ИИ отклонил запрос (код {code}); "
+                            "проверьте модель и адрес в «Настройках»"
+                        ) from exc
                 if attempt == NETWORK_RETRIES:
-                    raise LLMError("сервис ИИ не ответил") from exc
+                    raise LLMError(BUSY_MESSAGE) from exc
                 time.sleep(RETRY_PAUSE * (attempt + 1))
         raise AssertionError("недостижимо")
 
@@ -90,12 +101,16 @@ class AnthropicLLM(LLM):
         self.client = anthropic.Anthropic(
             base_url=base_url or None, api_key=api_key, max_retries=0, timeout=120
         )
+        # OverloadedError (529) в SDK наследует APIStatusError, а не InternalServerError.
         self.network_errors = (
             anthropic.APIConnectionError,
+            anthropic.APITimeoutError,
             anthropic.RateLimitError,
             anthropic.InternalServerError,
+            anthropic.OverloadedError,
         )
         self.auth_errors = (anthropic.AuthenticationError, anthropic.PermissionDeniedError)
+        self.status_errors = (anthropic.APIStatusError,)
 
     def _call(self, schema, system, user):
         reply = self.client.messages.create(
@@ -129,10 +144,12 @@ class OpenAILLM(LLM):
         )
         self.network_errors = (
             openai.APIConnectionError,
+            openai.APITimeoutError,
             openai.RateLimitError,
             openai.InternalServerError,
         )
         self.auth_errors = (openai.AuthenticationError, openai.PermissionDeniedError)
+        self.status_errors = (openai.APIStatusError,)  # 5xx любого вида — повтор
 
     def _call(self, schema, system, user):
         reply = self.client.chat.completions.create(
@@ -158,17 +175,25 @@ class OpenAILLM(LLM):
         return message.content or ""
 
 
+class MockStatusError(Exception):
+    def __init__(self, status_code: int):
+        super().__init__(f"код {status_code} (мок)")
+        self.status_code = status_code
+
+
 class MockLLM(LLM):
     """Ответы из фикстур `*.json`: {"match": "подстрока запроса", "response": {...}}
     или список таких объектов в одном файле.
 
     Вместо "response" можно дать "responses": [...] — ответы по очереди на повторные
     вызовы; строка — «сырой» ответ (например, битый JSON), {"__error__": "network"} —
-    сетевой сбой. Объём текста считается как символы / 3.
+    сетевой сбой, {"__error__": 529} — ответ сервиса с этим кодом. Объём текста считается
+    как символы / 3.
     """
 
     network_errors = (ConnectionError,)
     auth_errors = (PermissionError,)
+    status_errors = (MockStatusError,)
 
     def __init__(self, model: str, fixtures: str | Path):
         super().__init__(model)
@@ -193,6 +218,8 @@ class MockLLM(LLM):
             raise ConnectionError("сбой сети (мок)")
         if isinstance(answer, dict) and answer.get("__error__") == "auth":
             raise PermissionError("ключ (мок)")
+        if isinstance(answer, dict) and isinstance(answer.get("__error__"), int):
+            raise MockStatusError(answer["__error__"])
         self._count(
             (len(system) + len(user)) // 3, len(json.dumps(answer, ensure_ascii=False)) // 3
         )

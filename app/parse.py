@@ -7,6 +7,7 @@
 """
 
 import re
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime
@@ -214,14 +215,35 @@ def apply_edit(c: Candidate, field: str, raw: str) -> None:
     c.parsed = parsed
 
 
+_start_lock = threading.Lock()
+
+
 def start_parse(session: Session, ids: list[int]) -> Job:
-    session.query(Candidate).filter(Candidate.id.in_(ids)).update(
-        {Candidate.parse_status: "new", Candidate.parse_error: None}, synchronize_session=False
-    )
-    job = enqueue(session, "parse", {"ids": ids})
-    job.total = len(ids)
-    session.commit()
-    return job
+    """Ставит разбор. Если разбор уже идёт (в очереди, идёт или на паузе), новой задачи
+    не будет: недостающие записи дописываются в живую — двойной клик не оплачивает
+    разбор дважды."""
+    with _start_lock:
+        session.query(Candidate).filter(Candidate.id.in_(ids)).update(
+            {Candidate.parse_status: "new", Candidate.parse_error: None},
+            synchronize_session=False,
+        )
+        live = session.scalar(
+            select(Job)
+            .where(Job.kind == "parse", Job.status.in_(("queued", "running", "paused")))
+            .order_by(Job.id)
+            .limit(1)
+        )
+        if live:
+            known = live.payload.get("ids", [])
+            added = [i for i in ids if i not in set(known)]
+            live.payload = {**live.payload, "ids": [*known, *added]}
+            live.total = len(known) + len(added)
+            session.commit()
+            return live
+        job = enqueue(session, "parse", {"ids": ids})
+        job.total = len(ids)
+        session.commit()
+        return job
 
 
 def waiting_ids(session: Session, limit: int | None = None) -> list[int]:
@@ -282,8 +304,7 @@ def run_parse(job_id: int) -> None:
     llm = get_llm("parse")
     with db.SessionLocal() as session:
         job = session.get(Job, job_id)
-        ids = job.payload["ids"]
-        job.status, job.total = "running", len(ids)
+        job.status, job.total = "running", len(job.payload["ids"])
         _tick(job)
         session.commit()
         errors = job.error.splitlines() if job.error else []
@@ -292,10 +313,13 @@ def run_parse(job_id: int) -> None:
                 session.refresh(job)
                 if stopping.is_set() or job.status == "paused":
                     return
+                ids = job.payload["ids"]  # «Разобрать заново» могла дописать запись
+                job.total = len(ids)
                 batch = [
                     session.get(Candidate, i) for i in ids[job.progress : job.progress + BATCH]
                 ]
-                batch = [c for c in batch if c]
+                # разобранное другой задачей не отправляем повторно
+                batch = [c for c in batch if c and c.parse_status != "parsed"]
                 empty = [c for c in batch if len(c.raw_text.strip()) < MIN_CHARS]
                 todo = [c for c in batch if c not in empty]
                 try:
@@ -320,6 +344,7 @@ def run_parse(job_id: int) -> None:
                 errors += [f"{c.id}: {c.parse_error}" for c in batch if c.parse_status == "failed"]
                 job.progress = min(job.progress + BATCH, job.total)
                 job.error = "\n".join(errors) or None
+                session.refresh(job, ["payload"])  # не затереть дописанные записи
                 job.payload = {
                     **job.payload,
                     "tokens_in": job.payload.get("tokens_in", 0) + llm.tokens_in,
