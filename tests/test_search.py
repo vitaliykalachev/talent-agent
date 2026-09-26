@@ -3,9 +3,11 @@ import pytest
 from sqlalchemy import select
 
 from app import db, embed
-from app.demo import SHOWCASE_DUTIES
+from app.demo import RARE_TERM, SHOWCASE_DUTIES
 from app.models import Candidate, Embedding
-from app.search import Filters, search
+from app.search import Filters, hybrid, lexical, rrf, search
+
+pytestmark = pytest.mark.slow  # демо-база с моделью поиска
 
 
 @pytest.fixture
@@ -38,15 +40,21 @@ def test_every_parsed_candidate_has_vector(demo):
     assert len(ids) == 300 and matrix.shape == (300, 768)
 
 
-def test_launch_query_finds_casting_section_in_top10(demo):
-    """Критерий приёмки: «запуск цеха с нуля» → «организовал участок литья»."""
+def test_launch_query_finds_casting_section(demo):
+    """Критерий приёмки: «запуск цеха с нуля» → «организовал участок литья».
+
+    Вектор ставит его в первую десятку. В гибриде BM25 поднимает выше тех, кто
+    дословно «запустил новый цех», поэтому витрина уходит на вторую страницу, но
+    остаётся среди 40, которые идут в оценку под вакансию."""
     target = showcase(demo)
     assert "организовал участок литья" in target.raw_text
     assert "запуск" not in target.raw_text.lower() and "цех" not in target.raw_text.lower()
+    by_vector, _ = hybrid(demo, "запуск цеха с нуля", "vector")
+    assert target.id in by_vector[:10]
+    pool, _ = hybrid(demo, "запуск цеха с нуля")
+    assert target.id in pool[:40]
     r = search(demo, "запуск цеха с нуля", Filters())
     assert r.mode == "meaning"
-    top10 = [c.id for c, _, _ in r.hits[:10]]
-    assert target.id in top10
     labels = {near for _, near, _ in r.hits}
     assert labels <= {"очень близко", "близко", "возможно"}
     assert all(frag for _, _, frag in r.hits)
@@ -86,3 +94,24 @@ def test_contact_like_query_searches_contacts(demo):
     for query in (c.phones[0], c.emails[0].upper(), c.full_name):
         r = search(demo, query, Filters())
         assert r.mode == "contacts" and c.id in [h[0].id for h in r.hits], query
+
+
+def test_rrf_merges_by_places():
+    """RRF с k = 60: второй в обоих списках обходит первого в одном."""
+    assert rrf([1, 2, 3], [4, 2, 5])[0] == 2
+    assert rrf([], [7, 8]) == [7, 8]
+
+
+def test_rare_term_on_second_page_is_found(demo):
+    """Марка станка стоит на второй странице резюме и в поисковую карточку не входит:
+    находит её BM25 по полному тексту, и гибрид поднимает кандидата в первую десятку."""
+    target = demo.scalar(select(Candidate).where(Candidate.raw_text.contains(RARE_TERM)))
+    assert target.raw_text.index(RARE_TERM) > 3000  # вторая страница
+    assert RARE_TERM not in embed.passage(target)
+    assert lexical(demo, RARE_TERM)[0] == target.id
+    pool, _ = hybrid(demo, RARE_TERM)
+    assert target.id in pool[:10]
+    r = search(demo, RARE_TERM, Filters())
+    assert target.id in [c.id for c, _, _ in r.hits[:10]]
+    hit = next(frag for c, _, frag in r.hits if c.id == target.id)
+    assert "<mark>Hermle</mark>" in hit  # фрагмент — тот абзац, где найден термин

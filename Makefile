@@ -1,10 +1,14 @@
-.PHONY: run test lint demo
+.PHONY: run test test-fast lint demo eval
 
 run:
 	uv run app
 
 test:
 	uv run pytest -q
+
+# Без тестов с моделью поиска: секунды вместо минут.
+test-fast:
+	uv run pytest -q -m "not slow"
 
 lint:
 	uv run ruff check .

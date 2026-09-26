@@ -21,6 +21,10 @@ dependencies = [
     "python-dotenv>=1.2.3",
     "sentence-transformers>=6.1.0",
     "numpy>=2.5.3",
+    "bm25s>=0.3.11",
+    "pystemmer>=3.1.0",
+    "phonenumbers>=9.0.40",
+    "ranx>=0.3.21",
 ]
 
 [project.scripts]
@@ -50,6 +54,7 @@ select = ["E", "F", "I", "UP", "B"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = ["slow: грузит модель поиска (BERTA); `make test-fast` их пропускает"]
 filterwarnings = ["ignore:pkg_resources is deprecated:UserWarning"]
 
 [tool.ruff.lint.per-file-ignores]

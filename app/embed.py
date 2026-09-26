@@ -125,15 +125,6 @@ def _add(ids: list[int], vectors: np.ndarray) -> None:
         _index["matrix"] = vectors
 
 
-def nearest(query: str, k: int = 200) -> list[tuple[int, float]]:
-    ids, matrix = index()
-    if not len(ids):
-        return []
-    scores = matrix @ encode([query], "query")[0]
-    top = np.argsort(-scores)[:k]
-    return [(int(ids[i]), float(scores[i])) for i in top]
-
-
 def warm_up() -> None:
     """При старте: матрица и модель, если в базе уже есть векторы."""
     ids, _ = index()

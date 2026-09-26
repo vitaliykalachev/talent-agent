@@ -126,6 +126,7 @@ def test_candidate_card_shows_understanding_next_to_source(web, five, session): 
     assert "Ждёт разбора" in page(web, f"/candidates/{prod.id}")
 
 
+@pytest.mark.slow
 def test_candidates_search_by_meaning_with_chips(web, five, session):  # noqa: F811
     parse_all(session)
     text = page(web, "/candidates", params={"q": "литейное производство"})

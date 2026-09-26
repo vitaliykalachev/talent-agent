@@ -639,6 +639,36 @@ SHOWCASE_DUTIES = [
 ]
 
 
+# Кандидат с длинным резюме: редкий термин (марка станка) стоит на второй странице,
+# за пределами поисковой карточки. Его находит BM25 по полному тексту (раздел 8 плана).
+RARE_TERM = "Hermle C42U"
+SECOND_PAGE = [
+    "",
+    "Ранний опыт",
+    *[
+        f"— {year}: {what}"
+        for year, what in [
+            (2004, "технолог механического участка, подготовка управляющих программ"),
+            (2005, "освоение токарной группы, наладка станков с ЧПУ"),
+            (2006, "расчёт норм времени на операции механообработки"),
+            (2007, "подбор режущего инструмента, снижение расхода пластин"),
+            (2008, "внедрение карт наладки на участке фрезерной обработки"),
+            (2009, "обучение операторов, аттестация рабочих мест"),
+        ]
+    ],
+    "",
+    "Проекты",
+    *[
+        f"— проект {n}: перенос номенклатуры деталей на новое оборудование, партия {n * 40} шт."
+        for n in range(1, 25)
+    ],
+    "",
+    "Оборудование, с которым работал",
+    f"— пятиосевой обрабатывающий центр {RARE_TERM}, токарные станки с ЧПУ, координатно-"
+    "измерительная машина",
+]
+
+
 def recorded_answer(p: dict, facts: dict) -> dict:
     """Ответ модели для записи в фикстуру: то, что честный разбор нашёл бы в тексте."""
     duties = facts["duties"]
@@ -683,6 +713,7 @@ def generate(out: Path, seed: int = 42, today: date | None = None) -> tuple[Path
     stale_ids = {id(p) for p in rnd.sample(people, int(len(people) * STALE_SHARE))}
 
     showcase = next(p for p in people if p["prof"] == "производство" and id(p) not in stale_ids)
+    long_one = None
     short_names = Counter((p["last"], p["first"]) for p in people)
     answers = []
     phones: set[str] = set()
@@ -720,6 +751,14 @@ def generate(out: Path, seed: int = 42, today: date | None = None) -> tuple[Path
             facts,
             duties,
         )
+        if (
+            long_one is None
+            and p is not showcase
+            and p["prof"] == "производство"
+            and id(p) not in stale_ids
+            and style in ("normal", "long")
+        ):
+            long_one, text = p, text + "\n" + "\n".join(SECOND_PAGE)
         answers.append({"match": f"ID: {p['ext_id']}\n", "response": recorded_answer(p, facts)})
         where = rnd.choices(["csv", "docx", "txt"], weights=[6, 2, 2])[0]
         if where == "txt" and short_names[(p["last"], p["first"])] > 1:
