@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Кадровый агент{% endblock %}</title>
+<link rel="stylesheet" href="/static/app.css">
+<script src="/static/htmx.min.js" defer></script>
+</head>
+<body>
+<div class="page">
+  {% set path = request.url.path %}
+  <header class="topbar">
+    <a class="brand" href="/">Кадровый агент</a>
+    <nav>
+      {% for href, label in [("/", "Главная"), ("/upload", "Загрузка базы"), ("/candidates", "Кандидаты"), ("/vacancies", "Вакансии"), ("/morning", "Утро"), ("/settings", "Настройки")] %}
+      <a href="{{ href }}" class="{{ 'on' if (path == href or (href != '/' and path.startswith(href))) }}">{{ label }}</a>
+      {% endfor %}
+    </nav>
+  </header>
+  <main class="wrap">
+    {% block content %}{% endblock %}
+  </main>
+</div>
+</body>
+</html>

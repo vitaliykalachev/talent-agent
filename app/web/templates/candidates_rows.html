@@ -1,0 +1,29 @@
+<p><small>Найдено: {{ total }}</small></p>
+{% if items %}
+<div class="tablewrap">
+<table class="stack">
+  <thead><tr><th>Кандидат</th><th>Должность</th><th>Город</th><th>Дата резюме</th><th></th></tr></thead>
+  <tbody>
+  {% for c in items %}
+  <tr>
+    <td class="name" data-label="Кандидат"><a href="/candidates/{{ c.id }}">{{ c.full_name or "Без имени" }}</a></td>
+    <td data-label="Должность">{{ c.raw_text|headline or "—" }}</td>
+    <td data-label="Город">{{ c.city or "—" }}</td>
+    <td data-label="Дата резюме">{{ c.resume_date|ru_date }}</td>
+    <td data-label="Метка">{% if c.stale %}<span class="pill mid">нужно проверить</span>{% endif %}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% if pages > 1 %}
+{% set base = "/candidates?q=" ~ (q|urlencode) ~ "&city=" ~ (city|urlencode) ~ "&fresh=" ~ fresh %}
+<div class="pager">
+  {% if page > 1 %}<a href="{{ base }}&page={{ page - 1 }}">← Назад</a>{% endif %}
+  <span>Страница {{ page }} из {{ pages }}</span>
+  {% if page < pages %}<a href="{{ base }}&page={{ page + 1 }}">Дальше →</a>{% endif %}
+</div>
+{% endif %}
+{% else %}
+<div class="callout"><p>Никого не нашли. Попробуйте другое слово или снимите фильтры.</p></div>
+{% endif %}

@@ -1,0 +1,168 @@
+/* Палитра, карточки, таблицы, пилюли и врезки перенесены из клиентского документа
+   ../plan-ai-recruiting-agents.html; ниже — дополнения для экранов приложения. */
+:root{
+  --ink:#1a1d23;
+  --ink-soft:#4a5160;
+  --ink-mute:#767f8f;
+  --line:#e2e5eb;
+  --line-soft:#eef0f4;
+  --bg:#ffffff;
+  --bg-soft:#f7f8fa;
+  --accent:#2f4b8f;
+  --accent-soft:#eaf0ff;
+  --green:#1d7a4c;
+  --green-bg:#e6f5ed;
+  --amber:#a86a12;
+  --amber-bg:#fdf1de;
+  --red:#a8342a;
+  --red-bg:#fbeae8;
+  --radius:10px;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{
+  margin:0;
+  padding:0;
+  background:var(--bg-soft);
+  color:var(--ink);
+  font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI","Helvetica Neue",Arial,sans-serif;
+  font-feature-settings:"liga" 1,"kern" 1;
+}
+.page{
+  max-width:1080px;
+  margin:0 auto;
+  background:var(--bg);
+  padding:0 0 64px;
+  box-shadow:0 1px 40px rgba(26,29,35,.06);
+  min-height:100vh;
+}
+.wrap{padding:0 40px}
+
+/* ── Типографика ─────────────────────── */
+h1{font-size:28px;line-height:1.2;margin:32px 0 6px;letter-spacing:-.015em}
+h2{font-size:21px;line-height:1.3;margin:36px 0 10px;letter-spacing:-.01em}
+h3{font-size:17px;margin:24px 0 8px;line-height:1.35}
+p{margin:0 0 14px}
+.sub{color:var(--ink-soft);font-size:15px;margin:0 0 22px}
+strong{font-weight:640}
+a{color:var(--accent)}
+small{font-size:13px;color:var(--ink-mute)}
+ul,ol{margin:0 0 16px;padding-left:22px}
+li{margin-bottom:7px}
+
+/* ── Карточки и врезки ───────────────── */
+.callout{
+  background:var(--accent-soft);border-left:4px solid var(--accent);
+  padding:18px 22px;border-radius:0 var(--radius) var(--radius) 0;margin:24px 0;
+}
+.callout p:last-child{margin-bottom:0}
+.callout.warn{background:var(--amber-bg);border-left-color:var(--amber)}
+.callout.stop{background:var(--red-bg);border-left-color:var(--red)}
+.callout.ok{background:var(--green-bg);border-left-color:var(--green)}
+.callout .title{font-weight:700;display:block;margin-bottom:6px;font-size:15px}
+
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin:22px 0}
+.card{border:1px solid var(--line);border-radius:var(--radius);padding:20px;background:var(--bg)}
+.card h4{margin:0 0 10px;color:var(--ink);font-size:16px}
+.card p{font-size:14.5px;color:var(--ink-soft);margin:0 0 10px}
+.card p:last-child{margin-bottom:0}
+
+/* ── Таблицы ─────────────────────────── */
+.tablewrap{overflow-x:auto;margin:22px 0;border:1px solid var(--line);border-radius:var(--radius)}
+table{border-collapse:collapse;width:100%;font-size:14px;min-width:560px}
+th{
+  background:var(--bg-soft);text-align:left;font-weight:650;font-size:12.5px;
+  letter-spacing:.03em;text-transform:uppercase;color:var(--ink-soft);
+  padding:12px 14px;border-bottom:2px solid var(--line);white-space:nowrap;
+}
+td{padding:12px 14px;border-bottom:1px solid var(--line-soft);vertical-align:top;line-height:1.5}
+tr:last-child td{border-bottom:none}
+tbody tr:nth-child(even){background:#fbfcfd}
+td.num,th.num{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+.pill{
+  display:inline-block;font-size:11.5px;font-weight:700;padding:2px 8px;border-radius:20px;white-space:nowrap;
+}
+.pill.go{background:var(--green-bg);color:var(--green)}
+.pill.mid{background:var(--amber-bg);color:var(--amber)}
+.pill.stop{background:var(--red-bg);color:var(--red)}
+
+/* ── Шапка приложения ────────────────── */
+.topbar{
+  background:linear-gradient(160deg,#233a70 0%,#2f4b8f 55%,#3d5da6 100%);
+  color:#fff;padding:14px 40px;display:flex;flex-wrap:wrap;align-items:center;gap:6px 22px;
+}
+.topbar .brand{font-weight:700;font-size:17px;color:#fff;text-decoration:none;margin-right:10px}
+.topbar nav{display:flex;flex-wrap:wrap;gap:4px 16px}
+.topbar nav a{color:rgba(255,255,255,.8);text-decoration:none;font-size:14.5px;padding:4px 0}
+.topbar nav a.on{color:#fff;border-bottom:2px solid #fff}
+
+/* ── Счётчики ────────────────────────── */
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:22px 0}
+.stat{border:1px solid var(--line);border-radius:var(--radius);padding:16px 18px;background:var(--bg)}
+.stat b{display:block;font-size:30px;line-height:1.1;font-variant-numeric:tabular-nums}
+.stat span{font-size:13px;color:var(--ink-soft)}
+.stat a{text-decoration:none;color:inherit}
+
+/* ── Формы и кнопки ──────────────────── */
+form.filters{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;margin:18px 0}
+label{display:block;font-size:13px;color:var(--ink-soft);margin-bottom:4px}
+input[type=text],input[type=search],select{
+  font:inherit;font-size:15px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;
+  background:var(--bg);color:var(--ink);max-width:100%;
+}
+input[type=search]{min-width:280px}
+input[type=file]{font-size:14px;max-width:100%}
+.field{margin-bottom:16px}
+.button{
+  display:inline-block;font:inherit;font-size:15px;font-weight:600;padding:9px 18px;border-radius:8px;
+  border:1px solid var(--accent);background:var(--accent);color:#fff;cursor:pointer;text-decoration:none;
+}
+.button.ghost{background:var(--bg);color:var(--accent)}
+.examples{color:var(--ink-mute);font-size:13px}
+
+/* ── Прогресс ────────────────────────── */
+.bar-track{background:var(--line-soft);border-radius:5px;height:14px;overflow:hidden;margin:8px 0}
+.bar-fill{height:100%;border-radius:5px;background:var(--accent);transition:width .4s}
+.bar-fill.done{background:var(--green)}
+
+/* ── Карточка кандидата ──────────────── */
+.raw{
+  white-space:pre-wrap;word-wrap:break-word;font:14px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;
+  background:var(--bg-soft);border:1px solid var(--line);border-radius:var(--radius);padding:16px;margin:0;
+}
+dl.facts{display:grid;grid-template-columns:140px 1fr;gap:6px 14px;margin:0;font-size:14.5px}
+dl.facts dt{color:var(--ink-mute)}
+dl.facts dd{margin:0}
+.pager{display:flex;gap:14px;align-items:center;margin:14px 0;font-size:14px}
+
+/* ── Мобильные ───────────────────────── */
+@media (max-width:820px){
+  .wrap{padding:0 16px}
+  .topbar{padding:12px 16px}
+  h1{font-size:24px}
+  .grid2{grid-template-columns:1fr}
+  .stats{grid-template-columns:1fr 1fr}
+  input[type=search]{min-width:0;width:100%}
+  form.filters > *{flex:1 1 100%}
+  dl.facts{grid-template-columns:1fr;gap:0}
+  dl.facts dd{margin-bottom:8px}
+  /* таблицы превращаются в карточки */
+  .tablewrap{overflow-x:visible;border:none;border-radius:0}
+  table.stack{min-width:0;font-size:14.5px}
+  table.stack thead{display:none}
+  table.stack,table.stack tbody,table.stack tr,table.stack td{display:block;width:100%}
+  table.stack tbody tr{
+    border:1px solid var(--line);border-radius:var(--radius);
+    padding:14px 16px;margin-bottom:12px;background:var(--bg);
+  }
+  table.stack tbody tr:nth-child(even){background:var(--bg)}
+  table.stack td{border:none;padding:0 0 10px}
+  table.stack td:last-child{padding-bottom:0}
+  table.stack td::before{
+    content:attr(data-label);display:block;font-size:10.5px;letter-spacing:.09em;
+    text-transform:uppercase;color:var(--ink-mute);margin-bottom:3px;font-weight:650;
+  }
+  table.stack td.name::before{display:none}
+  table.stack td.name{font-size:17px;font-weight:700;padding-bottom:8px}
+  table.stack td.num{text-align:left;white-space:normal}
+}
