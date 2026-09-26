@@ -476,6 +476,18 @@ def test_feedback_reevaluates_candidate_and_reaches_prompt(session, base, mock):
     assert matches(session, v)["Громов"].change_reason == "vacancy_changed"
 
 
+def test_discriminatory_requirement_not_sent_to_model_nor_scored(session, base, mock):
+    v, p = base
+    ev.add_requirement(session, v, "Мужчина до 40 лет", "nice")
+    assert v.requirements[-1]["flag"] == "discriminatory"
+    mock(standard(v, p))
+    run(session, v)
+    assert all("Мужчина до 40 лет" not in text for text in mock.calls)
+    gromov = matches(session, v)["Громов"]
+    assert "r6" not in [ch["requirement_id"] for ch in gromov.checks]
+    assert gromov.score == 100
+
+
 def test_guard_nothing_personal_reaches_model(session, base, mock):
     v, p = base
     mock(standard(v, p))

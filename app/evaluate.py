@@ -203,15 +203,21 @@ def delete_requirement(session: Session, v: Vacancy, rid: str) -> None:
     _changed(session, v, [r for r in v.requirements if r["id"] != rid])
 
 
+def used(v: Vacancy) -> list[dict]:
+    """Требования, по которым идёт оценка. Дискриминационные (возраст, пол) в оценку не
+    идут, пока рекрутер их не заменит или не удалит: модель не должна судить по ним."""
+    return [r for r in v.requirements if r.get("flag") != "discriminatory"]
+
+
 def scored(v: Vacancy) -> list[dict]:
-    return [r for r in v.requirements if r["kind"] in ("must", "nice")]
+    return [r for r in used(v) if r["kind"] in ("must", "nice")]
 
 
 # ── Кого оценивать ──────────────────────────────────────────────────────────
 
 
 def query_text(v: Vacancy) -> str:
-    wanted = [r["name"] for r in v.requirements if r["kind"] != "avoid"]
+    wanted = [r["name"] for r in used(v) if r["kind"] != "avoid"]
     return "\n".join([v.title or "", *wanted, v.description or ""])
 
 
@@ -319,7 +325,7 @@ def estimate(session: Session, v: Vacancy, limit: int, order=None) -> dict:
     n = len(todo)
     chars = sum(min(len(c.raw_text or ""), MAX_CHARS) for c, _ in todo)
     tokens_in = chars / 3 + n * (len(SYSTEM_EVAL) / 3 + len(query_text(v)) / 3 + 1500)
-    tokens_out = n * 900
+    tokens_out = n * 1200  # живой замер: 900–1560 на кандидата
     usd = (
         tokens_in * config.number("price_eval_in") + tokens_out * config.number("price_eval_out")
     ) / 1e6
@@ -329,6 +335,7 @@ def estimate(session: Session, v: Vacancy, limit: int, order=None) -> dict:
         "count": n,
         "rub_low": rub * 0.7,
         "rub_high": rub * 1.3,
+        # живой замер через хаб: 5 кандидатов за 20–29 с (два захода по 4 запроса)
         "seconds_low": rounds * 10,
         "seconds_high": rounds * 30,
     }
@@ -418,9 +425,7 @@ def model_text(c: Candidate) -> str:
 
 
 def prompt(session: Session, v: Vacancy, c: Candidate, text: str) -> str:
-    reqs = "\n".join(
-        f"- {r['id']} [{KINDS[r['kind']].lower()}] {r['name']}" for r in v.requirements
-    )
+    reqs = "\n".join(f"- {r['id']} [{KINDS[r['kind']].lower()}] {r['name']}" for r in used(v))
     corrections = [
         anonymize(line, c.full_name, c.phones, c.emails) for line in _corrections(session, v, c)
     ]
@@ -542,7 +547,7 @@ def evaluate_one(llm, session: Session, v: Vacancy, c: Candidate) -> dict:
     if len(text.strip()) < MIN_CHARS:
         raise LLMError("в резюме нет текста")
     answer = llm.complete_structured(Evaluation, SYSTEM_EVAL, prompt(session, v, c, text))
-    checks = checked(answer, v.requirements, text)
+    checks = checked(answer, used(v), text)
     concerns = []
     for item in answer.concerns[:2]:
         lines = valid_lines(item.evidence_lines, text)

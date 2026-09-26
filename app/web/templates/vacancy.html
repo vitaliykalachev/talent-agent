@@ -23,7 +23,7 @@
       <span class="name">{{ r.name }}</span>{% if r.source == "user" %} <small class="edited">добавлено вами</small>{% endif %}
       {% if r.flag %}
       <div class="flag">
-        {% if r.flag == "discriminatory" %}<strong>Так писать нельзя.</strong> {{ FAIR_HINT }}{% else %}<strong>Расплывчато.</strong> {{ VAGUE_HINT }}{% endif %}
+        {% if r.flag == "discriminatory" %}<strong>Так писать нельзя.</strong> {{ FAIR_HINT }} В оценке не участвует, пока не замените или не удалите.{% else %}<strong>Расплывчато.</strong> {{ VAGUE_HINT }}{% endif %}
         {% if r.suggestion %}
         <form method="post" action="/vacancies/{{ v.id }}/requirements" class="inline">
           <input type="hidden" name="action" value="accept"><input type="hidden" name="rid" value="{{ r.id }}">
