@@ -13,6 +13,7 @@ Anthropic Messages API (в том числе прокси ClaudeHub), и OpenAI-
 """
 
 import json
+import re
 import threading
 import time
 from collections import Counter
@@ -189,6 +190,11 @@ class MockLLM(LLM):
     вызовы; строка — «сырой» ответ (например, битый JSON), {"__error__": "network"} —
     сетевой сбой, {"__error__": 529} — ответ сервиса с этим кодом. Объём текста считается
     как символы / 3.
+
+    Номера строк в записанном ответе можно задать фрагментом: {"__lines__": "текст"}
+    превращается в [n, n] по строке пронумерованного запроса «n| …», где он стоит,
+    {"__lines__": ["от", "до"]} — в [n, m]; не нашёлся — null. Так ответ не зависит от
+    того, как импорт разложил резюме по строкам.
     """
 
     network_errors = (ConnectionError,)
@@ -223,7 +229,28 @@ class MockLLM(LLM):
         self._count(
             (len(system) + len(user)) // 3, len(json.dumps(answer, ensure_ascii=False)) // 3
         )
+        return _resolve_lines(answer, user)
+
+
+def _line_of(fragment: str, user: str) -> int | None:
+    needle = " ".join(fragment.lower().split())
+    for match in re.finditer(r"^(\d+)\| (.*)$", user, re.MULTILINE):
+        if needle in " ".join(match.group(2).lower().split()):
+            return int(match.group(1))
+    return None
+
+
+def _resolve_lines(answer, user: str):
+    if isinstance(answer, list):
+        return [_resolve_lines(a, user) for a in answer]
+    if not isinstance(answer, dict):
         return answer
+    if "__lines__" in answer:
+        where = answer["__lines__"]
+        start, stop = (where, where) if isinstance(where, str) else where
+        found = _line_of(start, user), _line_of(stop, user)
+        return list(found) if None not in found else None
+    return {k: _resolve_lines(v, user) for k, v in answer.items()}
 
 
 def get_llm(purpose: str = "parse") -> LLM:

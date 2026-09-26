@@ -133,7 +133,40 @@ def _phone_or_keep(match: re.Match) -> str:
 
 
 def anonymize(text: str, full_name: str | None = None, phones=(), emails=(), links=()) -> str:
-    text = text or ""
+    """Обезличенная копия с тем же числом строк, что и оригинал: номера строк, на которые
+    ссылается модель, совпадают с `raw_text`. Если замена склеила строки (телефон или ФИО
+    с переносом), текст обезличивается построчно."""
+    result = _anonymize(text or "", full_name, phones, emails, links)
+    lines = (text or "").split("\n")
+    if result.count("\n") == len(lines) - 1:
+        return result
+    return "\n".join(_anonymize(line, full_name, phones, emails, links) for line in lines)
+
+
+def numbered(text: str) -> str:
+    """Строки с номерами «12| текст» — так модель указывает, где что написано."""
+    return "\n".join(f"{i}| {line}" for i, line in enumerate(text.split("\n"), start=1))
+
+
+def valid_lines(value, text: str) -> list[int] | None:
+    """Диапазон [от, до] строк `text`, если он существует и опирается не только на
+    плейсхолдеры обезличивания; иначе None («в резюме не сказано»)."""
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        return None
+    try:
+        start, stop = int(value[0]), int(value[1])
+    except (TypeError, ValueError):
+        return None
+    lines = text.split("\n")
+    if not 1 <= start <= stop <= len(lines):
+        return None
+    cited = PLACEHOLDER_RE.sub("", "\n".join(lines[start - 1 : stop]))
+    if not re.search(r"\w{2,}", cited):
+        return None
+    return [start, stop]
+
+
+def _anonymize(text: str, full_name, phones, emails, links) -> str:
     # 1. известные значения записи
     for email in emails:
         text = re.sub(re.escape(email), EMAIL, text, flags=re.IGNORECASE)

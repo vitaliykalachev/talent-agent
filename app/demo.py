@@ -571,11 +571,17 @@ def _resume_text(
     skills = rnd.sample(spec["skills"], k=rnd.randint(3, 6))
     facts.update(years=years, duties=duties, skills=skills, positions=[], education=None)
     if style == "short":
-        facts["positions"] = [{"title": title, "quote": f"{title}, опыт {years} лет"}]
+        facts["positions"] = [
+            {"title": title, "source_lines": {"__lines__": f"{title}, опыт {years} лет"}}
+        ]
         return f"{name}\n{title}, опыт {years} лет, {city}. {duties[0].capitalize()}."
     if style == "messy":
         facts["positions"] = [
-            {"title": title, "company": company, "quote": f"{title.lower()} {company}"}
+            {
+                "title": title,
+                "company": company,
+                "source_lines": {"__lines__": f"{title.lower()} {company}"},
+            }
         ]
         return (
             f"{name.upper()}\n{title.lower()} {company} стаж {years} лет "
@@ -591,14 +597,14 @@ def _resume_text(
             "company": company,
             "start": str(start),
             "end": "по настоящее время",
-            "quote": f"{start} — по настоящее время: {company}, {title}",
+            "source_lines": {"__lines__": f"{start} — по настоящее время: {company}, {title}"},
         },
         {
             "title": prev_title,
             "company": prev_company,
             "start": str(prev_start),
             "end": str(start),
-            "quote": f"{prev_start} — {start}: {prev_company}, {prev_title}",
+            "source_lines": {"__lines__": f"{prev_start} — {start}: {prev_company}, {prev_title}"},
         },
     ]
     facts["education"] = {"institution": university, "year": birth.year + 22}

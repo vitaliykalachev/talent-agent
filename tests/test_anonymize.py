@@ -4,7 +4,7 @@ import pytest
 from sqlalchemy import select
 
 from app import db
-from app.anonymize import anonymize, quote_span
+from app.anonymize import anonymize, numbered, quote_span, valid_lines
 from app.importer.normalize import EMAIL_RE, extract_phones
 from app.models import Candidate
 
@@ -204,3 +204,24 @@ def test_docx_author_and_file_name_not_in_text(tmp_path):
         z.writestr("docProps/core.xml", core)
     text = document_text(path)
     assert "Токарь" in text and "Сидоров" not in text
+
+
+def test_anonymized_copy_keeps_line_numbers():
+    """Номера строк обезличенной копии совпадают с оригиналом, даже если телефон или
+    два имени подряд разбиты переносом."""
+    text = "Иванов Иван\nПетров Сергей\nтел. 8 (912)\n345-67-89\nИнженер-технолог\n\nКАМАЗ"
+    out = anonymize(text, "Иванов Иван", ["+79123456789"])
+    assert out.count("\n") == text.count("\n")
+    assert out.split("\n")[4] == "Инженер-технолог" and out.split("\n")[6] == "КАМАЗ"
+    assert numbered("а\nб").split("\n") == ["1| а", "2| б"]
+
+
+def test_line_range_checked_against_text():
+    text = "[ИМЯ]\nИнженер-технолог\n[ТЕЛЕФОН], [ПОЧТА]\nКАМАЗ, 2015–2020"
+    assert valid_lines([2, 4], text) == [2, 4]
+    assert valid_lines([4, 5], text) is None  # строки 5 нет
+    assert valid_lines([3, 2], text) is None  # перевёрнутый диапазон
+    assert valid_lines([0, 1], text) is None
+    assert valid_lines([1, 1], text) is None  # одни плейсхолдеры — не факт
+    assert valid_lines([3, 3], text) is None
+    assert valid_lines(None, text) is None and valid_lines(["x", 2], text) is None

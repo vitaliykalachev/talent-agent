@@ -18,7 +18,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app import config, db
-from app.anonymize import anonymize, quote_span
+from app.anonymize import anonymize, numbered, quote_span, valid_lines
 from app.jobs import enqueue, stopping
 from app.llm import AuthError, LLMError, get_llm
 from app.models import Candidate, Embedding, Job
@@ -63,8 +63,8 @@ class Position(BaseModel):
     end: str | None = Field(None, description="Конец: ГГГГ-ММ или ГГГГ; null, если работает сейчас")
     is_current: bool = Field(False, description="Работает здесь сейчас («по н.в.»)")
     team_size: int | None = Field(None, description="Сколько людей в подчинении")
-    quote: str | None = Field(
-        None, description="Дословный фрагмент резюме до 15 слов, откуда взята эта позиция"
+    source_lines: list[int] | None = Field(
+        None, description="Номера строк резюме [от, до], где описано это место работы"
     )
 
     @model_validator(mode="after")
@@ -122,14 +122,22 @@ SYSTEM = """Ты разбираешь резюме кандидата для к�
 - relocation: no_relocation — не готов, relocation_possible — возможен,
   relocation_desirable — хочет переехать, unknown — не сказано.
 - summary — три коротких предложения своими словами: кто это, опыт, чем силён.
-- quote у каждого места работы и summary_quote — дословный фрагмент резюме до 15 слов,
-  на котором основано значение. Копируй символ в символ, ничего не меняя.
+- Строки резюме пронумерованы: «12| текст». source_lines у каждого места работы —
+  номера строк [от, до], где оно описано; номер ставь из начала строки, сам номер
+  в значения полей не переноси.
+- summary_quote — дословный фрагмент резюме до 15 слов, на котором основано summary.
+  Копируй символ в символ, без номера строки.
 - Метки вида [ИМЯ], [ТЕЛЕФОН], [ПОЧТА], [ССЫЛКА], [ДАТА РОЖДЕНИЯ], [ДОКУМЕНТ] —
   скрытые данные, не пытайся их восстановить."""
 
 
-def model_input(c: Candidate) -> str:
+def model_text(c: Candidate) -> str:
+    """Обезличенный текст резюме; строки совпадают со строками `raw_text`."""
     return anonymize(c.raw_text[:MAX_CHARS], c.full_name, c.phones, c.emails, c.links)
+
+
+def model_input(c: Candidate) -> str:
+    return numbered(model_text(c))
 
 
 def company_key(name: str | None) -> str | None:
@@ -169,15 +177,18 @@ def years_by_positions(positions: list[dict], resume_date: date) -> float | None
     return round((total + cur_stop - cur_start) / 12, 1)
 
 
-def to_parsed(profile: CandidateProfile, c: Candidate) -> dict:
+def to_parsed(profile: CandidateProfile, c: Candidate, seen: str | None = None) -> dict:
     """Результат модели + проверки кода + прежние правки пользователя.
 
-    Цитаты сверяются с оригиналом (`quote_ok`), код компании и стаж считает код;
+    Строки-источники мест работы проверяются по тексту, который видела модель
+    (`lines_ok`), цитата summary — по оригиналу; код компании и стаж считает код;
     стаж модели остаётся только для сверки: расхождение больше года — «проверьте».
     """
     data = profile.model_dump()
+    seen = model_text(c) if seen is None else seen
     for pos in data["positions"]:
-        pos["quote_ok"] = bool(pos["quote"] and quote_span(pos["quote"], c.raw_text))
+        pos["source_lines"] = valid_lines(pos["source_lines"], seen)
+        pos["lines_ok"] = pos["source_lines"] is not None
         pos["company_key"] = company_key(pos["company"])
     data["summary_quote_ok"] = bool(
         data["summary_quote"] and quote_span(data["summary_quote"], c.raw_text)
@@ -322,8 +333,9 @@ def run_parse(job_id: int) -> None:
                 batch = [c for c in batch if c and c.parse_status != "parsed"]
                 empty = [c for c in batch if len(c.raw_text.strip()) < MIN_CHARS]
                 todo = [c for c in batch if c not in empty]
+                texts = [model_text(c) for c in todo]
                 try:
-                    results = list(pool.map(lambda t: _ask(llm, t), [model_input(c) for c in todo]))
+                    results = list(pool.map(lambda t: _ask(llm, numbered(t)), texts))
                 except AuthError as exc:
                     job.status, job.error = "failed", str(exc)
                     job.finished_at = datetime.now()
@@ -331,12 +343,12 @@ def run_parse(job_id: int) -> None:
                     return
                 for c in empty:
                     c.parse_status, c.parse_error = "failed", "в резюме нет текста"
-                for c, result in zip(todo, results, strict=True):
+                for c, text, result in zip(todo, texts, results, strict=True):
                     if isinstance(result, LLMError):
                         c.parse_status, c.parse_error = "failed", str(result)
                     else:
                         c.parsed, c.parse_status, c.parse_error = (
-                            to_parsed(result, c),
+                            to_parsed(result, c, text),
                             "parsed",
                             None,
                         )

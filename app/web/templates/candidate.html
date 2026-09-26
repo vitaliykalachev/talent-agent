@@ -63,7 +63,7 @@
           <div class="pos">
             {% if "q-p" ~ loop.index0 in anchors %}<a href="#q-p{{ loop.index0 }}">{{ pos.title }}</a>{% else %}{{ pos.title }}{% endif %}{% if pos.company %}, {{ pos.company }}{% endif %}
             <br><small>{{ pos.start or "?" }} — {{ "сейчас" if pos.is_current else (pos.end or "?") }}{% if pos.industry %} · {{ pos.industry }}{% endif %}{% if pos.team_size %} · команда {{ pos.team_size }}{% endif %}</small>
-            {% if not pos.quote_ok %} <span class="pill mid">проверьте</span>{% endif %}
+            {% if not pos.lines_ok %} <span class="pill mid">проверьте</span>{% endif %}
           </div>
           {% else %}{{ missing() }}{% endfor %}
         </dd>

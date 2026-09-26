@@ -96,15 +96,26 @@ def stale_label(c: Candidate) -> str:
     return "Нужно проверить: дата резюме не указана"
 
 
-def marked_source(c: Candidate) -> tuple[Markup, set[str]]:
-    """Исходник с метками <mark id> на цитатах, на которых основаны поля слева."""
+def line_span(text: str, lines: list[int]) -> tuple[int, int]:
+    """Строки [от, до] (с единицы) → смещения символов в тексте."""
+    starts = [0]
+    for line in text.split("\n"):
+        starts.append(starts[-1] + len(line) + 1)
+    return starts[lines[0] - 1], starts[lines[1]] - 1
+
+
+def marked_source(c: Candidate, extra: list[tuple[str, list[int]]] = ()) -> tuple[Markup, set[str]]:
+    """Исходник с метками <mark id> на строках и цитатах, на которых основаны поля слева;
+    `extra` — ещё строки для подсветки (довод оценки по ссылке «Показать в резюме»)."""
     parsed = c.parsed or {}
-    quotes = [(f"q-p{i}", p.get("quote")) for i, p in enumerate(parsed.get("positions", []))]
-    quotes.append(("q-s", parsed.get("summary_quote")))
     spans = []
-    for anchor, quote in quotes:
-        if quote and (span := quote_span(quote, c.raw_text)):
-            spans.append((*span, anchor))
+    ranges = [(f"q-p{i}", p.get("source_lines")) for i, p in enumerate(parsed.get("positions", []))]
+    for anchor, lines in [*ranges, *extra]:
+        if lines:
+            spans.append((*line_span(c.raw_text, lines), anchor))
+    quote = parsed.get("summary_quote")
+    if quote and (span := quote_span(quote, c.raw_text)):
+        spans.append((*span, "q-s"))
     spans.sort()
     out, pos, anchors = [], 0, set()
     for start, stop, anchor in spans:

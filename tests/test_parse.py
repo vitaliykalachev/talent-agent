@@ -75,8 +75,15 @@ def test_five_professions_parsed_with_current_positions(five, session):
         "net",
     )
     assert prod["relocation"] == "relocation_possible"
-    assert prod["positions"][0]["quote_ok"] and prod["summary_quote_ok"]
-    assert five["logistics.txt"].parsed["relocation"] == "no_relocation"
+    assert prod["positions"][0]["lines_ok"] and prod["summary_quote_ok"]
+    start, stop = prod["positions"][0]["source_lines"]
+    line = five["production.txt"].raw_text.split("\n")[start - 1]
+    assert start == stop and "Литейный завод Поволжье" in line
+    logistics = five["logistics.txt"].parsed
+    assert logistics["relocation"] == "no_relocation"
+    # строк 900–901 в резюме нет → опоры нет, на экране «проверьте»
+    assert logistics["positions"][1]["source_lines"] is None
+    assert logistics["positions"][1]["lines_ok"] is False
     # выдуманная моделью цитата не найдена в исходнике → «проверьте»
     assert five["logistics.txt"].parsed["summary_quote_ok"] is False
     assert five["finance.txt"].parsed["languages"] == ["английский B2"]
@@ -101,6 +108,11 @@ def test_overloaded_service_on_one_resume_does_not_stop_parse(five, session, tmp
 def test_guard_nothing_personal_reaches_model(five, session, sent):
     parse_all(session)
     assert len(sent) == 5
+    # резюме уходит с номерами строк, и их столько же, сколько в оригинале
+    prod = five["production.txt"]
+    text = next(t for t in sent if "Литейный завод Поволжье" in t)
+    assert f"{prod.raw_text.count(chr(10)) + 1}| " in text
+    assert f"{prod.raw_text.count(chr(10)) + 2}| " not in text
     for c in five.values():
         for text in sent:
             assert leaks(text, c) == [], (c.source_file, text[:400])
