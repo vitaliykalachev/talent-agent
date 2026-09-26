@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Загрузка №{{ batch.id }} · Кадровый агент{% endblock %}
+{% block content %}
+<h1>Загрузка №{{ batch.id }}</h1>
+<p class="sub">
+  {% if batch.file_name %}Выгрузка «{{ batch.file_name }}»: {{ rows_count }} строк.{% endif %}
+  Файлов резюме: {{ docs_count }}.
+</p>
+
+{% if job %}{% include "job.html" %}{% endif %}
+
+<form method="post" action="/upload/{{ batch.id }}/start">
+{% if columns %}
+<h2>Какая колонка что значит</h2>
+{% if not job %}
+<p class="sub">Мы угадали значения по названиям и содержимому колонок. Проверьте и поправьте, если нужно.</p>
+{% endif %}
+<div class="tablewrap">
+<table class="stack">
+  <thead><tr><th>Колонка в файле</th><th>Примеры</th><th>Что это</th></tr></thead>
+  <tbody>
+  {% for col in columns %}
+  <tr>
+    <td class="name" data-label="Колонка">{{ col.header }}</td>
+    <td class="examples" data-label="Примеры">{{ col.examples|join(" · ")|truncate(90) }}</td>
+    <td data-label="Что это">
+      <select name="col_{{ col.index }}" aria-label="Что значит колонка {{ col.header }}" {% if job %}disabled{% endif %}>
+        {% for key, label in fields.items() %}
+        <option value="{{ key }}"{% if key == col.field %} selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endif %}
+{% if not job %}<button class="button" type="submit">Начать разбор</button>{% endif %}
+</form>
+{% endblock %}

@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Кандидаты · Кадровый агент{% endblock %}
+{% block content %}
+<h1>Кандидаты</h1>
+<p class="sub">Поиск по имени, должности и городу. Поиск по смыслу появится на следующем этапе.</p>
+
+<form class="filters" method="get" action="/candidates"
+      hx-get="/candidates" hx-target="#results" hx-push-url="true"
+      hx-trigger="input changed delay:400ms from:input[name=q], change from:select, submit">
+  <div>
+    <label for="q">Поиск</label>
+    <input id="q" type="search" name="q" value="{{ q }}" placeholder="Фамилия, должность или город">
+  </div>
+  <div>
+    <label for="city">Город</label>
+    <select id="city" name="city">
+      <option value="">Все города</option>
+      {% for c in cities %}<option value="{{ c }}"{% if c == city %} selected{% endif %}>{{ c }}</option>{% endfor %}
+    </select>
+  </div>
+  <div>
+    <label for="fresh">Свежесть резюме</label>
+    <select id="fresh" name="fresh">
+      <option value="">Любая</option>
+      <option value="fresh"{% if fresh == "fresh" %} selected{% endif %}>Свежее полутора лет</option>
+      <option value="stale"{% if fresh == "stale" %} selected{% endif %}>Старше или без даты</option>
+    </select>
+  </div>
+  <div><button class="button ghost" type="submit">Найти</button></div>
+</form>
+
+<div id="results">{% include "candidates_rows.html" %}</div>
+{% endblock %}

@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}{{ c.full_name or "Кандидат" }} · Кадровый агент{% endblock %}
+{% block content %}
+<p><a href="/candidates">← Все кандидаты</a></p>
+<h1>{{ c.full_name or "Без имени" }}</h1>
+<p class="sub">
+  {{ c.raw_text|headline or "Должность не указана" }}{% if c.city %} · {{ c.city }}{% endif %}
+  {% if c.stale %} <span class="pill mid">нужно проверить</span>{% endif %}
+  {% if main %} <span class="pill stop">дубль</span>{% endif %}
+</p>
+
+{% if main %}
+<div class="callout warn">
+  <span class="title">Это дубль</span>
+  <p>Запись объединена с более свежей: <a href="/candidates/{{ main.id }}">{{ main.full_name or "Без имени" }}</a>. Контакты перенесены туда.</p>
+</div>
+{% endif %}
+{% if c.stale and not main %}
+<div class="callout warn"><p>Данные старше полутора лет или без даты, нужна проверка.</p></div>
+{% endif %}
+
+<div class="grid2">
+  <div class="card">
+    <h4>Извлечённые контакты</h4>
+    <dl class="facts">
+      <dt>Телефоны</dt><dd>{{ c.phones|join(", ") or "—" }}</dd>
+      <dt>Почта</dt><dd>{{ c.emails|join(", ") or "—" }}</dd>
+      <dt>Город</dt><dd>{{ c.city or "—" }}</dd>
+      <dt>Год рождения</dt><dd>{{ c.birth_year or "—" }}</dd>
+      <dt>Дата резюме</dt><dd>{{ c.resume_date|ru_date }}</dd>
+      <dt>ID в CRM</dt><dd>{{ c.external_id or "—" }}</dd>
+      <dt>Файл резюме</dt><dd>{{ c.source_file or "—" }}</dd>
+    </dl>
+  </div>
+  <div class="card">
+    <h4>Объединённые дубли</h4>
+    {% if merged %}
+    <ul>
+      {% for m in merged %}<li><a href="/candidates/{{ m.id }}">{{ m.full_name or "Без имени" }}</a> <small>{{ m.resume_date|ru_date }}</small></li>{% endfor %}
+    </ul>
+    {% else %}
+    <p>Дублей не найдено.</p>
+    {% endif %}
+  </div>
+</div>
+
+<h2>Исходный текст</h2>
+<pre class="raw">{{ c.raw_text }}</pre>
+{% endblock %}

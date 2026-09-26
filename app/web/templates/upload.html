@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Загрузка базы · Кадровый агент{% endblock %}
+{% block content %}
+<h1>Загрузка базы</h1>
+<p class="sub">Отдайте выгрузку из CRM и файлы резюме. На следующем шаге покажем, как мы поняли колонки.</p>
+
+{% if error %}<div class="callout stop"><p>{{ error }}</p></div>{% endif %}
+
+<form class="card" method="post" action="/upload" enctype="multipart/form-data">
+  <div class="field">
+    <label for="table">Выгрузка из CRM (CSV или XLSX)</label>
+    <input id="table" type="file" name="table" accept=".csv,.xlsx">
+  </div>
+  <div class="field">
+    <label for="resumes">Файлы резюме или ZIP-архив (PDF, DOCX, TXT)</label>
+    <input id="resumes" type="file" name="resumes" accept=".pdf,.docx,.txt,.zip" multiple>
+  </div>
+  <div class="field">
+    <label for="folder">Или целая папка с резюме</label>
+    <input id="folder" type="file" name="folder" webkitdirectory multiple>
+  </div>
+  <button class="button" type="submit">Загрузить и проверить колонки</button>
+</form>
+
+{% if batches %}
+<h2>Прошлые загрузки</h2>
+<div class="tablewrap">
+<table class="stack">
+  <thead><tr><th>Загрузка</th><th>Файл</th><th class="num">Записей</th><th>Когда</th></tr></thead>
+  <tbody>
+  {% for b in batches %}
+  <tr>
+    <td class="name" data-label="Загрузка"><a href="/upload/{{ b.id }}">Загрузка №{{ b.id }}</a></td>
+    <td data-label="Файл">{{ b.file_name or "только резюме" }}</td>
+    <td class="num" data-label="Записей">{{ b.rows_ok }} из {{ b.rows_total }}</td>
+    <td data-label="Когда">{{ b.created_at.strftime("%d.%m.%Y %H:%M") }}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endif %}
+{% endblock %}

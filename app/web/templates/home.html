@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Главная</h1>
+<p class="sub">Состояние базы и то, что требует внимания.</p>
+
+<div class="stats">
+  <div class="stat"><a href="/candidates"><b data-stat="candidates">{{ stats.candidates }}</b><span>кандидатов в базе</span></a></div>
+  <div class="stat"><b data-stat="duplicates">{{ stats.duplicates }}</b><span>дублей объединено</span></div>
+  <div class="stat"><a href="/candidates?fresh=stale"><b data-stat="stale">{{ stats.stale }}</b><span>резюме старше полутора лет</span></a></div>
+  <div class="stat"><b data-stat="parsed">{{ stats.parsed }}</b><span>разобрано моделью (с этапа 2)</span></div>
+</div>
+
+{% if running %}
+<h2>Идёт сейчас</h2>
+{% for job in running %}{% include "job.html" %}{% endfor %}
+{% endif %}
+
+<h2>Требует внимания</h2>
+{% if not stats.records %}
+<div class="callout"><p>База пока пустая. <a href="/upload">Загрузите выгрузку из CRM</a> или папку с резюме.</p></div>
+{% elif not (stats.stale or with_errors or merged) %}
+<div class="callout ok"><p>Всё в порядке: дублей, устаревших записей и ошибок разбора нет.</p></div>
+{% endif %}
+
+{% if stats.stale %}
+<div class="callout warn">
+  <span class="title">Устаревшие записи: {{ stats.stale }}</span>
+  <p>Дата резюме старше полутора лет или не указана, такие данные нужно проверить. <a href="/candidates?fresh=stale">Открыть список</a></p>
+</div>
+{% endif %}
+
+{% for job in with_errors %}
+<div class="callout stop">
+  <span class="title">Не удалось прочитать файлы (загрузка №{{ job.payload.batch_id }})</span>
+  <p>{% for line in job.error.splitlines()[:5] %}{{ line }}<br>{% endfor %}</p>
+</div>
+{% endfor %}
+
+{% if merged %}
+<h3>Дубли, объединённые автоматически</h3>
+<p class="sub">Совпал телефон или почта. Основной считается более свежая запись, контакты сложены.</p>
+<div class="tablewrap">
+<table class="stack">
+  <thead><tr><th>Основная запись</th><th>Объединена с</th><th>Статус</th></tr></thead>
+  <tbody>
+  {% for dup, main, old in merged %}
+  <tr>
+    <td class="name" data-label="Основная запись"><a href="/candidates/{{ main.id }}">{{ main.full_name or "Без имени" }}</a></td>
+    <td data-label="Объединена с"><a href="/candidates/{{ old.id }}">{{ old.full_name or "Без имени" }}</a> <small>{{ old.resume_date|ru_date }}</small></td>
+    <td data-label="Статус"><span class="pill go">объединено</span></td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endif %}
+{% endblock %}
