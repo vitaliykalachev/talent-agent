@@ -19,7 +19,7 @@ from app.importer.mapping import FIELDS
 from app.importer.normalize import looks_like_name
 from app.importer.pipeline import documents, load_table, new_batch, start_import
 from app.jobs import enqueue
-from app.llm import LLMError, get_llm
+from app.llm import AuthError, get_llm
 from app.models import Candidate, Duplicate, ImportBatch, Job, Match, Vacancy
 from app.search import Filters, search
 from app.web import present
@@ -299,7 +299,7 @@ def parse_confirm(request: Request, scope: str = "trial", job: int | None = None
         scope=scope,
         job_id=job,
         est=est,
-        duration=present.duration(est["seconds_low"], est["seconds_high"]),
+        duration=present.duration(est["seconds_low"], est["seconds_high"], True),
         price=present.rub_range(est["rub_low"], est["rub_high"]),
     )
 
@@ -495,7 +495,7 @@ async def candidate_fix(request: Request, candidate_id: int):
         try:
             parse.apply_edit(c, field, str(form.get("value", "")))
         except ValueError:
-            raise HTTPException(400, "Нужно число") from None
+            raise HTTPException(400, "Нужно число не меньше нуля, например 12,5") from None
         s.commit()
     return RedirectResponse(f"/candidates/{candidate_id}#f-{field}", status_code=303)
 
@@ -559,12 +559,14 @@ def settings_check(request: Request):
         get_llm("parse").complete_structured(
             Ping, "Проверка связи. Ответь ok = true.", "Проверка связи: ответь ok = true."
         )
-    except LLMError as exc:
+    except AuthError as exc:
         return _settings_page(request, f"Не получилось: {exc}", error=True)
-    except Exception as exc:  # адрес не тот, сервис недоступен — показываем как есть
-        return _settings_page(request, f"Не получилось подключиться: {exc}", error=True)
-    seconds = time.monotonic() - started
-    return _settings_page(request, f"Подключение работает: ответ за {seconds:.1f} с.")
+    except Exception:  # адрес не тот, сервис недоступен или отвечает не то
+        return _settings_page(
+            request, "Адрес сервиса не отвечает, проверьте его в Настройках.", error=True
+        )
+    seconds = f"{time.monotonic() - started:.1f}".replace(".", ",")
+    return _settings_page(request, f"Подключение работает: ответ за {seconds} с.")
 
 
 STUBS = {"/morning": "Утро"}

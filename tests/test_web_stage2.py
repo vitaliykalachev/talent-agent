@@ -40,7 +40,8 @@ def test_trial_parse_offer_confirm_and_preview(web, five, session):  # noqa: F81
     assert re.search(r'data-stat="waiting">\s*5\s*<', home)
 
     confirm = page(web, "/parse", params={"scope": "trial"})
-    assert "Разберём 5 резюме. Займёт меньше минуты, будет стоить примерно" in confirm
+    # живой замер ревью: 5 резюме ≈ 60 с
+    assert "Разберём 5 резюме. Займёт 1 минуту, будет стоить примерно" in confirm
     assert "₽" in confirm and "оригиналы остаются у вас" in confirm
     assert "Показать, что уходит модели" in confirm
 
@@ -75,6 +76,42 @@ def test_double_click_starts_one_parse(web, five, session, sent):  # noqa: F811
     assert len(list(session.scalars(select(Job).where(Job.kind == "parse")))) == 1
     run_pending()
     assert len(sent) == 5
+
+
+@pytest.mark.parametrize("raw", ["inf", "nan", "-3", "abc", "1e999"])
+def test_bad_number_in_fix_is_400_with_text(web, five, session, raw):  # noqa: F811
+    parse_all(session)
+    prod = five["production.txt"]
+    r = web.post(f"/candidates/{prod.id}/fix", data={"field": "total_years", "value": raw})
+    assert r.status_code == 400 and "Нужно число не меньше нуля" in r.text
+    session.expire_all()
+    assert "total_years" not in (prod.parsed.get("edits") or {})
+
+
+def test_unreachable_service_named_plainly(web, monkeypatch):
+    from app.llm import LLMError
+    from app.web import routes
+
+    class Down:
+        def complete_structured(self, *a):
+            raise LLMError("сервис ИИ не ответил")
+
+    class Broken:
+        def complete_structured(self, *a):
+            raise ValueError("Request URL is missing an 'http://' or 'https://' protocol.")
+
+    for fake in (Down, Broken):
+        monkeypatch.setattr(routes, "get_llm", lambda purpose, f=fake: f())
+        text = web.post("/settings/check").text
+        assert "Адрес сервиса не отвечает, проверьте его в Настройках." in text
+        assert "protocol" not in text
+
+
+def test_link_to_resume_line_opens_resume_tab_on_phone(client):
+    """Без JS: вкладка «Резюме» открывается по якорю (:target), обратно — ссылкой."""
+    css = client.get("/static/app.css").text
+    assert "#tab-agent:checked ~ .split:has(.source :target) .source{display:block}" in css
+    assert "#tab-agent:checked ~ .split:has(.source :target) .agent{display:none}" in css
 
 
 def test_pause_and_resume_buttons(web, session):
@@ -153,7 +190,8 @@ def test_settings_save_key_hidden_and_check(web, tmp_path):
     web.post("/settings", data={"llm_api_key": ""})
     assert config.get("llm_api_key") == "секрет-123"  # пустое поле ключ не стирает
 
-    assert "Подключение работает" in web.post("/settings/check").text
+    ok = web.post("/settings/check").text
+    assert re.search(r"Подключение работает: ответ за \d+,\d с\.", ok)
     (tmp_path / "auth.json").write_text(
         json.dumps({"match": "", "response": {"__error__": "auth"}})
     )

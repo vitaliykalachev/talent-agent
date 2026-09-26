@@ -105,6 +105,33 @@ def test_overloaded_service_on_one_resume_does_not_stop_parse(five, session, tmp
     assert sum(c.parse_status == "parsed" for c in five.values()) == 4
 
 
+def test_crash_mid_batch_does_not_resend_parsed(five, session, sent, monkeypatch):
+    """Сбой на третьем ответе (как SIGKILL): две записи уже сохранены, после перезапуска
+    уходят в модель только оставшиеся три."""
+    from app import parse
+
+    monkeypatch.setattr(parse, "PARALLEL", 1)
+    seen = []
+    original = parse.to_parsed
+
+    def crash_on_third(profile, c, text=None):
+        seen.append(c.id)
+        if len(seen) == 3:
+            raise RuntimeError("процесс убит")
+        return original(profile, c, text)
+
+    monkeypatch.setattr(parse, "to_parsed", crash_on_third)
+    job = parse_all(session)
+    assert job.status == "failed"
+    assert sum(c.parse_status == "parsed" for c in five.values()) == 2
+    job.status = "running"  # перезапуск приложения продолжает прерванную задачу
+    session.commit()
+    run_pending()
+    session.expire_all()
+    assert all(c.parse_status == "parsed" for c in five.values())
+    assert len(sent) == 5 + 3
+
+
 def test_guard_nothing_personal_reaches_model(five, session, sent):
     parse_all(session)
     assert len(sent) == 5

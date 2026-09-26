@@ -30,13 +30,14 @@ def plural(n: int, one: str, few: str, many: str) -> str:
     return {1: one, 2: few, 3: few, 4: few}.get(n % 10, many)
 
 
-def duration(low: float, high: float) -> str:
-    """«3–4 часа», «10–20 минут», «меньше минуты»."""
+def duration(low: float, high: float, after_verb: bool = False) -> str:
+    """«3–4 часа», «10–20 минут», «меньше минуты»; after_verb — после «займёт»:
+    «займёт 1 минуту», а не «1 минута»."""
     if high < 60:
         return "меньше минуты"
     if high < 3600:
         lo, hi = max(1, round(low / 60)), max(1, round(high / 60))
-        unit = plural(hi, "минута", "минуты", "минут")
+        unit = plural(hi, "минуту" if after_verb else "минута", "минуты", "минут")
     else:
         lo, hi = max(1, round(low / 3600)), max(1, round(high / 3600))
         unit = plural(hi, "час", "часа", "часов")

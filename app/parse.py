@@ -6,10 +6,11 @@
 Исправления пользователя (`parsed["edits"]`) повторный разбор не перезаписывает.
 """
 
+import math
 import re
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime
 from typing import Literal
 
@@ -216,8 +217,10 @@ def apply_edit(c: Candidate, field: str, raw: str) -> None:
     if field in ("skills", "languages"):
         value = [v.strip() for v in raw.split(",") if v.strip()]
     elif field in ("total_years", "salary_amount"):
-        digits = re.sub(r"\s", "", raw).replace(",", ".")
-        value = float(digits) if field == "total_years" else int(float(digits))
+        number = float(re.sub(r"\s", "", raw).replace(",", "."))
+        if not math.isfinite(number) or number < 0:
+            raise ValueError("нужно неотрицательное число")
+        value = number if field == "total_years" else int(number)
     else:
         value = raw.strip()
     parsed = dict(c.parsed or {})
@@ -288,10 +291,12 @@ def estimate(session: Session, ids: list[int]) -> dict:
         "chars": chars,
         "usd": usd,
         "rub": rub,
-        "rub_low": rub * 0.7,
-        "rub_high": rub * 1.3,
-        "seconds_low": n * 1.2,  # 4 запроса параллельно, 5–10 с на ответ
-        "seconds_high": n * 2.5,
+        # Живой замер через хаб (ревью этапа 2): 5 резюме ≈ 60 с при 4 потоках,
+        # цена — у верхней границы прежней вилки. Отсюда 9–15 с на резюме и сдвиг вверх.
+        "rub_low": rub * 0.9,
+        "rub_high": rub * 1.6,
+        "seconds_low": n * 9,
+        "seconds_high": n * 15,
     }
 
 
@@ -333,26 +338,34 @@ def run_parse(job_id: int) -> None:
                 batch = [c for c in batch if c and c.parse_status != "parsed"]
                 empty = [c for c in batch if len(c.raw_text.strip()) < MIN_CHARS]
                 todo = [c for c in batch if c not in empty]
-                texts = [model_text(c) for c in todo]
-                try:
-                    results = list(pool.map(lambda t: _ask(llm, numbered(t)), texts))
-                except AuthError as exc:
-                    job.status, job.error = "failed", str(exc)
-                    job.finished_at = datetime.now()
-                    session.commit()
-                    return
+                texts = {c.id: model_text(c) for c in todo}
+                futures = {pool.submit(_ask, llm, numbered(texts[c.id])): c for c in todo}
                 for c in empty:
                     c.parse_status, c.parse_error = "failed", "в резюме нет текста"
-                for c, text, result in zip(todo, texts, results, strict=True):
+                session.commit()
+                # Каждая запись сохраняется, как только пришёл ответ: после сбоя или
+                # остановки разобранные повторно не отправляются.
+                for future in as_completed(futures):
+                    c = futures[future]
+                    try:
+                        result = future.result()
+                    except AuthError as exc:
+                        for other in futures:
+                            other.cancel()
+                        job.status, job.error = "failed", str(exc)
+                        job.finished_at = datetime.now()
+                        session.commit()
+                        return
                     if isinstance(result, LLMError):
                         c.parse_status, c.parse_error = "failed", str(result)
                     else:
                         c.parsed, c.parse_status, c.parse_error = (
-                            to_parsed(result, c, text),
+                            to_parsed(result, c, texts[c.id]),
                             "parsed",
                             None,
                         )
                         session.execute(delete(Embedding).where(Embedding.candidate_id == c.id))
+                    session.commit()
                 errors += [f"{c.id}: {c.parse_error}" for c in batch if c.parse_status == "failed"]
                 job.progress = min(job.progress + BATCH, job.total)
                 job.error = "\n".join(errors) or None

@@ -48,12 +48,12 @@
 
 <div class="tabs">
   <input type="radio" name="tab" id="tab-agent" checked>
-  <label for="tab-agent">Что понял агент</label>
+  <label for="tab-agent"><a href="#agent">Что понял агент</a></label>
   <input type="radio" name="tab" id="tab-source">
   <label for="tab-source">Резюме</label>
 
   <div class="split">
-    <section class="pane agent">
+    <section class="pane agent" id="agent">
       {% if c.parse_status != "parsed" %}
       <div class="callout"><p>{% if c.parse_status == "new" %}Резюме ждёт разбора. Пока видны только контакты.{% else %}Разобрать не удалось. Попробуйте ещё раз или посмотрите исходник.{% endif %}</p></div>
       {% else %}

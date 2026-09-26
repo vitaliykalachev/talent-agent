@@ -144,7 +144,7 @@ def vacancy(request: Request, vacancy_id: int):
                         "limit": limit,
                         "count": est["count"],
                         "price": present.rub_range(est["rub_low"], est["rub_high"]),
-                        "duration": present.duration(est["seconds_low"], est["seconds_high"]),
+                        "duration": present.duration(est["seconds_low"], est["seconds_high"], True),
                     }
                 )
         evaluated = s.scalar(select(func.count(Match.candidate_id)).where(Match.vacancy_id == v.id))
