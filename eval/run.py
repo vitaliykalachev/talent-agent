@@ -53,7 +53,9 @@ def runs(session, found: dict[str, Vacancy]) -> dict[str, Run]:
 
 
 def check_evidence(session) -> dict[str, int]:
-    """Проверка доводов кодом по всем оценкам в базе."""
+    """Проверка доводов кодом по всем оценкам в базе. Смотрим сырые ответы модели
+    (`raw_checks`), а не уже очищенные `checks`: код превращает вердикт без строк в
+    «нет данных», и по очищенным счётчики всегда были бы нулями."""
     stats = {"оценок": 0, "доводов со строками": 0, "строк нет в резюме": 0}
     stats |= {"«есть» без строк": 0, "цитата из одних плейсхолдеров": 0}
     rows = session.execute(
@@ -65,15 +67,14 @@ def check_evidence(session) -> dict[str, int]:
         stats["оценок"] += 1
         text = ev.model_text(c)
         lines = text.split("\n")
-        items = [*m.checks, *m.concerns]
-        for item in items:
+        for item in [*(m.raw_checks or []), *m.concerns]:
             span = item.get("evidence_lines")
             if item.get("verdict") == "met" and not span:
                 stats["«есть» без строк"] += 1
             if not span:
                 continue
             stats["доводов со строками"] += 1
-            if not (1 <= span[0] <= span[1] <= len(lines)):
+            if len(span) != 2 or not (1 <= span[0] <= span[1] <= len(lines)):
                 stats["строк нет в резюме"] += 1
             elif valid_lines(span, text) is None:
                 stats["цитата из одних плейсхолдеров"] += 1

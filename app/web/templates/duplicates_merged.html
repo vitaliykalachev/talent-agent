@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Объединено автоматически · Кадровый агент{% endblock %}
+{% block content %}
+<p><a href="/">← Главная</a></p>
+<h1>Объединено автоматически: {{ rows|length }}</h1>
+<p class="sub">Совпал телефон или почта, ФИО совместимо. Основной считается более свежая запись, контакты сложены. Ошиблись — откройте основную запись и нажмите «Отменить объединение».</p>
+{% if rows %}
+<div class="tablewrap">
+<table class="stack">
+  <thead><tr><th>Основная запись</th><th>Объединена с</th><th></th></tr></thead>
+  <tbody>
+  {% for dup, main, old in rows %}
+  <tr>
+    <td class="name" data-label="Основная запись"><a href="/candidates/{{ main.id }}">{{ main.full_name or "Без имени" }}</a></td>
+    <td data-label="Объединена с"><a href="/candidates/{{ old.id }}">{{ old.full_name or "Без имени" }}</a> <small>{{ old.resume_date|short_date }}</small></td>
+    <td><form method="post" action="/duplicates/{{ dup.id }}/unmerge" class="inline"><button class="button ghost" type="submit">Отменить объединение</button></form></td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<div class="callout"><p>Автоматически объединённых записей нет.</p></div>
+{% endif %}
+{% endblock %}

@@ -53,4 +53,60 @@
 <form method="post" action="/settings/check">
   <button class="button ghost" type="submit">Проверить подключение</button>
 </form>
+
+<form class="card settings" method="post" action="/settings" id="night">
+  <h4>Ночной прогон</h4>
+  <p>Ночью агент помечает устаревшие резюме, ищет возможные дубли, готовит новые резюме к поиску и оценивает вакансии с отметкой «Оценивать каждую ночь». Утром отчёт ждёт на экране «Утро».</p>
+  <fieldset class="choose">
+    <label><input type="radio" name="night_days" value="daily"{% if values.night_days != "weekdays" %} checked{% endif %}> Каждую ночь в {{ values.night_time }}</label>
+    <label><input type="radio" name="night_days" value="weekdays"{% if values.night_days == "weekdays" %} checked{% endif %}> По будням в {{ values.night_time }}</label>
+  </fieldset>
+  <div class="field">
+    <label for="night_time">Время</label>
+    <input id="night_time" type="time" name="night_time" value="{{ values.night_time }}" required>
+    <small>Компьютер должен быть включён: во сне прогон не идёт. Проснётся в течение шести часов — прогон пройдёт сразу, позже — «Утро» покажет кнопку «Запустить сейчас».</small>
+  </div>
+  <button class="button" type="submit">Сохранить</button>
+</form>
+
+<form class="card settings" method="post" action="/settings" id="mail">
+  <h4>Почта для отчёта</h4>
+  <p>После ночного прогона пришлём письмо: сколько кандидатов подходят по каждой вакансии и что нужно решить. Имён и контактов кандидатов в письме нет. Не заполните — отчёт будет только на экране «Утро».</p>
+  <div class="prices">
+    <div class="field"><label for="smtp_host">Почтовый сервер</label><input id="smtp_host" type="text" name="smtp_host" value="{{ values.smtp_host }}" placeholder="smtp.yandex.ru"></div>
+    <div class="field"><label for="smtp_port">Порт</label><input id="smtp_port" type="text" inputmode="numeric" name="smtp_port" value="{{ values.smtp_port }}"></div>
+    <div class="field"><label for="smtp_user">Логин</label><input id="smtp_user" type="text" name="smtp_user" value="{{ values.smtp_user }}" autocomplete="off"></div>
+    <div class="field"><label for="smtp_password">Пароль</label><input id="smtp_password" type="password" name="smtp_password" autocomplete="off" placeholder="{{ 'Пароль задан. Оставьте пустым, чтобы не менять' if has_password else 'Пароль приложения' }}"></div>
+    <div class="field"><label for="smtp_to">Кому отправлять</label><input id="smtp_to" type="email" name="smtp_to" value="{{ values.smtp_to }}" placeholder="recruiter@example.ru"></div>
+  </div>
+  <div class="actions">
+    <button class="button" type="submit">Сохранить</button>
+    <button class="button ghost" type="submit" formaction="/settings/mail-test">Отправить пробное письмо</button>
+  </div>
+</form>
+
+<section class="card" id="model-input">
+  <h4>Что уходит модели</h4>
+  <p>Перед отправкой агент убирает из резюме ФИО, телефоны, почту, ссылки, дату рождения и номера документов. Модель видит текст таким:</p>
+  <pre class="sample">{{ sample }}</pre>
+  <p><small>Оригиналы резюме остаются на этом компьютере. Поиск по смыслу работает здесь же, без отправки резюме.</small></p>
+</section>
+
+<section class="card" id="memory">
+  <h4>Агент запомнил</h4>
+  {% for f, title in memory %}
+  <div class="memory">
+    <span>«{{ f.text }}» — {{ FEEDBACK_KINDS[f.kind]|lower|replace("…", "") }}{% if f.scope == "all" %}, для всех вакансий{% elif title %}, вакансия «{{ title }}»{% endif %} <small>{{ f.created_at|short_date }}</small></span>
+    <form method="post" action="/feedback/{{ f.id }}/delete" class="inline">
+      <input type="hidden" name="back" value="/settings#memory">
+      <button class="button ghost" type="submit">Удалить</button>
+    </form>
+  </div>
+  {% else %}
+  <p class="none">Пока ничего. Нажмите «Неверно» у довода в результате по вакансии, и агент учтёт это при следующей оценке.</p>
+  {% endfor %}
+  {% if memory %}
+  <form method="post" action="/feedback/clear"><button class="button ghost" type="submit">Забыть все исправления</button></form>
+  {% endif %}
+</section>
 {% endblock %}

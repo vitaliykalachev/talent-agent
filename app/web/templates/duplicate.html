@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Похоже на дубль · Кадровый агент{% endblock %}
+{% macro row(key, label, value) %}
+<dt>{{ label }}</dt><dd{% if key in same %} class="same"{% endif %}>{{ value }}</dd>
+{% endmacro %}
+{% block content %}
+<p><a href="/duplicates">← Все пары ({{ waiting }})</a></p>
+<h1>Похоже на дубль</h1>
+{% if dup.status == "rejected" %}<div class="callout"><p>Вы отметили: это разные люди. Пара больше не предлагается.</p></div>{% endif %}
+<p class="lead">Почему похожи: {{ reason }}.</p>
+
+<div class="pair">
+  {% for card in cards %}
+  {% set c = card.c %}
+  <section class="card">
+    <h4><a href="/candidates/{{ c.id }}">{{ c.full_name or "Без имени" }}</a>{% if loop.first %} <span class="pill go">свежее</span>{% endif %}</h4>
+    <dl class="facts">
+      {{ row("full_name", "ФИО", c.full_name or "—") }}
+      {{ row("city", "Город", c.city or "—") }}
+      {{ row("birth_year", "Год рождения", c.birth_year or "—") }}
+      {{ row("resume_date", "Дата резюме", c.resume_date|short_date) }}
+      {{ row("job", "Должность", (card.job[0] ~ (" · " ~ card.job[1] if card.job[1] else "")) or "—") }}
+      {{ row("phones", "Телефоны", c.phones|join(", ") or "—") }}
+      {{ row("emails", "Почта", c.emails|join(", ") or "—") }}
+      {{ row("", "Откуда", card.batch or c.source_file or "—") }}
+    </dl>
+  </section>
+  {% endfor %}
+</div>
+
+{% if dup.status == "open" %}
+<form class="card" method="post" action="/duplicates/{{ dup.id }}/merge">
+  {% if choices %}
+  <h4>Что оставить в объединённой записи</h4>
+  <p>По умолчанию берём значения из более свежей записи. Телефоны и почта складываются.</p>
+  {% for field, label in choices %}
+  <fieldset class="choose">
+    <legend>{{ label }}</legend>
+    {% for card in cards %}
+    {% set value = card.c[field] %}
+    <label><input type="radio" name="{{ field }}" value="{{ card.c.id }}"{% if loop.first %} checked{% endif %}> {{ value|short_date if field == "resume_date" else value }}</label>
+    {% endfor %}
+  </fieldset>
+  {% endfor %}
+  {% else %}
+  <p>Основной станет более свежая запись, контакты сложатся. Объединение можно отменить на карточке кандидата.</p>
+  {% endif %}
+  <div class="actions">
+    <button class="button" type="submit">Объединить</button>
+    <button class="button ghost" type="submit" formaction="/duplicates/{{ dup.id }}/reject">Нет, это разные люди</button>
+    <button class="button ghost" type="submit" formaction="/duplicates/{{ dup.id }}/postpone">Отложить</button>
+  </div>
+</form>
+{% endif %}
+{% endblock %}

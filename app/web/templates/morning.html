@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Утро · Кадровый агент{% endblock %}
+{% block content %}
+<div class="morning">
+<h1>Утро</h1>
+{% if run %}<p class="sub">Отчёт за ночь, {{ run.started_at|short_date }}, прогон начался в {{ run.started_at.strftime("%H:%M") }}.</p>{% endif %}
+
+{% if alert %}
+<div class="callout {{ 'stop' if run_now else 'warn' }}">
+  <p>{{ alert }}</p>
+  {% if run_now %}
+  <form method="post" action="/night/run" class="inline"><button class="button" type="submit">Запустить сейчас</button></form>
+  {% endif %}
+</div>
+{% endif %}
+
+{% if run %}
+{% if empty %}<div class="callout"><p>{{ empty }}</p></div>{% endif %}
+{% for section in sections %}
+<h2>{{ section.title }}</h2>
+<ul class="rows">
+  {% for row in section.rows %}
+  <li><a href="{{ row.link }}">{{ row.text }}</a>{% if section.title == "Новые кандидаты по вакансиям" %} <a class="button ghost open" href="{{ row.link }}">Открыть</a>{% endif %}</li>
+  {% endfor %}
+</ul>
+{% endfor %}
+{% if run.summary.mail and run.summary.mail != "sent" %}<p><small>{{ run.summary.mail }}</small></p>{% endif %}
+{% endif %}
+
+<p class="sub">{{ next }} <a href="/settings#night">Изменить время</a></p>
+</div>
+{% endblock %}

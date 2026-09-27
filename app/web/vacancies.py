@@ -1,5 +1,6 @@
 """Экраны «Вакансии», «Новая вакансия», карточка вакансии и «Результат по вакансии»."""
 
+import math
 from datetime import date
 from urllib.parse import quote
 
@@ -12,7 +13,7 @@ from app import evaluate as ev
 from app.llm import LLMError
 from app.models import Candidate, Feedback, Job, Match, Vacancy
 from app.web import present
-from app.web.routes import render
+from app.web.routes import render, templates
 
 router = APIRouter()
 
@@ -24,6 +25,7 @@ FEEDBACK_KINDS = {
 }
 REJECT_REASONS = ["Нет нужного опыта", "Зарплата", "Город", "Данные устарели", "Другое"]
 DECISIONS = {"invite": "Позвать", "maybe": "Под вопросом", "reject": "Не подходит"}
+templates.env.globals["FEEDBACK_KINDS"] = FEEDBACK_KINDS  # «Агент запомнил» в «Настройках»
 
 
 def _vacancy(s, vacancy_id: int) -> Vacancy:
@@ -33,16 +35,41 @@ def _vacancy(s, vacancy_id: int) -> Vacancy:
     return v
 
 
-def _number(value) -> float | None:
+# Потолки полей: больше — ошибка ввода, а не условие (иначе карточка вакансии падает).
+LIMITS = {
+    "min_years": (60, "Стаж — не больше 60 лет."),
+    "max_salary": (100_000_000, "Зарплата — не больше 100 000 000 ₽."),
+    "top_n": (500, "Сколько кандидатов показать — не больше 500."),
+}
+
+
+def _number(value, field: str | None = None) -> float | None:
+    """Число из поля формы; пусто или не число — None; «inf», «1e999» и больше потолка
+    поля — ответ 400 с русским текстом."""
     try:
-        return float(str(value).replace(" ", "").replace("\xa0", "").replace(",", "."))
+        number = float(str(value).replace(" ", "").replace("\xa0", "").replace(",", "."))
     except ValueError:
         return None
+    if not math.isfinite(number):
+        raise HTTPException(400, "Укажите обычное число, например 3 или 150 000.")
+    if field in LIMITS and number > LIMITS[field][0]:
+        raise HTTPException(400, LIMITS[field][1])
+    return number
+
+
+def _candidate_id(form) -> int | None:
+    value = str(form.get("candidate_id", "")).strip()
+    if not value:
+        return None
+    if not (value.isascii() and value.isdigit()) or len(value) > 12:
+        raise HTTPException(400, "Не понял, о каком кандидате речь: обновите страницу.")
+    return int(value)
 
 
 def _filters(form) -> dict:
     """Жёсткие условия из формы: пустое поле — условия нет."""
-    years, salary = _number(form.get("min_years", "")), _number(form.get("max_salary", ""))
+    years = _number(form.get("min_years", ""), "min_years")
+    salary = _number(form.get("max_salary", ""), "max_salary")
     found = {
         "city": str(form.get("city", "")).strip(),
         "min_years": years if years is not None and years >= 0 else None,
@@ -53,8 +80,8 @@ def _filters(form) -> dict:
 
 
 def _top_n(form, default: int = 40) -> int:
-    n = _number(form.get("top_n", ""))
-    return min(max(int(n), 1), 200) if n is not None and n == n else default
+    n = _number(form.get("top_n", ""), "top_n")
+    return max(int(n), 1) if n is not None else default
 
 
 def _live_job(s, v: Vacancy) -> Job | None:
@@ -104,6 +131,7 @@ async def vacancy_create(request: Request):
             description=description,
             hard_filters=_filters(form),
             top_n=_top_n(form),
+            schedule_enabled=form.get("schedule") == "1",
         )
         s.add(v)
         s.commit()
@@ -205,6 +233,7 @@ async def conditions_save(request: Request, vacancy_id: int):
         v = _vacancy(s, vacancy_id)
         v.hard_filters = _filters(form)
         v.top_n = _top_n(form, v.top_n)
+        v.schedule_enabled = form.get("schedule") == "1"
         s.commit()
     return RedirectResponse(f"/vacancies/{vacancy_id}", status_code=303)
 
@@ -320,7 +349,7 @@ async def decision(request: Request, vacancy_id: int):
     form = await request.form()
     value = str(form.get("decision", ""))
     with db.SessionLocal() as s:
-        m = s.get(Match, (vacancy_id, int(form.get("candidate_id", 0))))
+        m = s.get(Match, (vacancy_id, _candidate_id(form) or 0))
         if not m:
             raise HTTPException(404)
         m.decision = value if value in DECISIONS else None
@@ -344,7 +373,7 @@ async def feedback(request: Request, vacancy_id: int):
     with db.SessionLocal() as s:
         _vacancy(s, vacancy_id)
         f = Feedback(
-            candidate_id=int(form["candidate_id"]) if form.get("candidate_id") else None,
+            candidate_id=_candidate_id(form),
             vacancy_id=vacancy_id if scope == "vacancy" else None,
             target=str(form.get("target", "reason"))
             if form.get("target") in ("reason", "concern", "field")
@@ -368,7 +397,8 @@ async def feedback_delete(request: Request, feedback_id: int):
             s.delete(f)
             s.commit()
     back = str(form.get("back", "/vacancies"))
-    return RedirectResponse(back if back.startswith("/") else "/vacancies", status_code=303)
+    safe = back.startswith("/") and not back.startswith("//") and "\\" not in back
+    return RedirectResponse(back if safe else "/vacancies", status_code=303)
 
 
 @router.post("/vacancies/{vacancy_id}/notice")

@@ -5,13 +5,20 @@
 
 <div class="stats">
   <div class="stat"><a href="/candidates"><b data-stat="candidates">{{ stats.candidates }}</b><span>кандидатов в базе</span></a></div>
-  <div class="stat"><b data-stat="duplicates">{{ stats.duplicates }}</b><span>дублей объединено</span></div>
+  <div class="stat"><a href="/duplicates/merged"><b data-stat="duplicates">{{ stats.duplicates }}</b><span>дублей объединено</span></a></div>
   <div class="stat"><a href="/candidates?fresh=stale"><b data-stat="stale">{{ stats.stale }}</b><span>резюме старше полутора лет</span></a></div>
 </div>
 <div class="stats">
   <div class="stat"><b data-stat="parsed">{{ stats.parsed|num }}</b><span>разобрано</span></div>
   <div class="stat"><b data-stat="waiting">{{ stats.waiting|num }}</b><span>ждут разбора</span></div>
   <div class="stat"><b data-stat="failed">{{ stats.failed|num }}</b><span>не удалось разобрать</span></div>
+</div>
+
+<div class="callout" id="night">
+  <p>{{ tonight }} <a href="/settings#night">Изменить время</a></p>
+  {% if night and night.status == "done" %}<p>Последний ночной прогон — {{ night.started_at|short_date }} в {{ night.started_at.strftime("%H:%M") }}. <a href="/morning">Открыть «Утро»</a></p>
+  {% elif night and night.status in ("failed", "missed") %}<p>{{ night.error }} <a href="/morning">Открыть «Утро»</a></p>
+  {% elif night %}<p>Ночной прогон идёт. <a href="/morning">Открыть «Утро»</a></p>{% endif %}
 </div>
 
 {% include "progress.html" %}
@@ -22,11 +29,18 @@
 {% for job in running %}{% include "job.html" %}{% endfor %}
 {% endif %}
 
-<h2>Требует внимания</h2>
+<h2>Нужно проверить</h2>
 {% if not stats.records %}
 <div class="callout"><p>База пока пустая. <a href="/upload">Загрузите выгрузку из CRM</a> или папку с резюме.</p></div>
-{% elif not (stats.stale or with_errors or merged) %}
-<div class="callout ok"><p>Всё в порядке: дублей, устаревших записей и ошибок разбора нет.</p></div>
+{% elif not (stats.stale or with_errors or stats.possible) %}
+<div class="callout ok"><p>Всё в порядке: возможных дублей, устаревших записей и ошибок разбора нет.</p></div>
+{% endif %}
+
+{% if stats.possible %}
+<div class="callout warn">
+  <span class="title">Похоже на дубль: {{ stats.possible }}</span>
+  <p>Записи похожи, но сами мы их не объединяем. <a class="button ghost" href="/duplicates">Проверить дубли</a></p>
+</div>
 {% endif %}
 
 {% if stats.stale %}
@@ -38,27 +52,12 @@
 
 {% for job in with_errors %}
 <div class="callout stop">
-  <span class="title">Загрузка №{{ job.payload.batch_id }}: {{ job|job_status }}</span>
+  <span class="title">{{ batch_names.get(job.payload.batch_id, "Загрузка") }}: {{ job|job_status }}</span>
   <p>{{ problem_summary(job) }}. <a href="/jobs/{{ job.id }}/problems">Показать список</a></p>
 </div>
 {% endfor %}
 
-{% if merged %}
-<h3>Дубли, объединённые автоматически</h3>
-<p class="sub">Совпал телефон или почта. Основной считается более свежая запись, контакты сложены.</p>
-<div class="tablewrap">
-<table class="stack">
-  <thead><tr><th>Основная запись</th><th>Объединена с</th><th>Статус</th></tr></thead>
-  <tbody>
-  {% for dup, main, old in merged %}
-  <tr>
-    <td class="name" data-label="Основная запись"><a href="/candidates/{{ main.id }}">{{ main.full_name or "Без имени" }}</a></td>
-    <td data-label="Объединена с"><a href="/candidates/{{ old.id }}">{{ old.full_name or "Без имени" }}</a> <small>{{ old.resume_date|ru_date }}</small></td>
-    <td data-label="Статус"><span class="pill go">объединено</span></td>
-  </tr>
-  {% endfor %}
-  </tbody>
-</table>
-</div>
+{% if stats.auto_merged %}
+<p>Объединено автоматически: <a href="/duplicates/merged">{{ stats.auto_merged }}</a>. Совпал телефон или почта, ФИО совместимо.</p>
 {% endif %}
 {% endblock %}

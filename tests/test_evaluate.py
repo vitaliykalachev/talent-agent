@@ -488,6 +488,23 @@ def test_discriminatory_requirement_not_sent_to_model_nor_scored(session, base, 
     assert gromov.score == 100
 
 
+def test_discriminatory_sentence_of_description_not_sent_to_model(session, base, mock):
+    """Правка ревью этапа 3, №1: «мужчина до 35 лет, без детей» из описания вакансии
+    не доходит до модели оценки, остальное описание доходит."""
+    v, p = base
+    v.description = (
+        "Начальник цеха литья под давлением. Мужчина до 35 лет, без детей. "
+        "Желательно бережливое производство."
+    )
+    session.commit()
+    mock(standard(v, p))
+    run(session, v)
+    assert mock.calls
+    for text in mock.calls:
+        assert "Мужчина до 35 лет" not in text and "без детей" not in text
+        assert "Желательно бережливое производство." in text
+
+
 def test_guard_nothing_personal_reaches_model(session, base, mock):
     v, p = base
     mock(standard(v, p))
@@ -497,3 +514,75 @@ def test_guard_nothing_personal_reaches_model(session, base, mock):
         for text in mock.calls:
             assert leaks(text, c) == [], (c.full_name, text[:300])
     assert "2| Тел.: [ТЕЛЕФОН], [ПОЧТА]" in next(t for t in mock.calls if "Литейный завод" in t)
+
+
+def _checks(musts: list[str], nices: list[str]) -> list[dict]:
+    kinds = [("must", v) for v in musts] + [("nice", v) for v in nices]
+    return [
+        {
+            "requirement_id": f"r{i}",
+            "name": f"требование {i}",
+            "kind": kind,
+            "weight": ev.WEIGHTS[kind],
+            "verdict": verdict,
+            "evidence_lines": None if verdict == "no_data" else [1, 1],
+        }
+        for i, (kind, verdict) in enumerate(kinds, start=1)
+    ]
+
+
+def test_maybe_needs_at_least_half_of_must_requirements():
+    """Решение по этапу 3: «Можно рассмотреть» — только если хотя бы половина
+    обязательных «есть» или «частично», иначе «Скорее не подходят»."""
+    one_of_five = _checks(["met", "no_data", "no_data", "no_data", "no_data"], ["met"] * 4)
+    assert ev.score(one_of_five) >= ev.MAYBE_FROM  # по баллу прошёл бы
+    assert category_of(one_of_five) == ev.UNFIT
+    half = _checks(["met", "partial", "no_data", "no_data"], ["met"] * 4)
+    assert ev.score(half) >= ev.MAYBE_FROM and category_of(half) == ev.MAYBE
+    below_half = _checks(["partial", "no_data", "no_data"], ["met"] * 4)
+    assert category_of(below_half) == ev.UNFIT
+
+
+def test_crash_mid_batch_keeps_paid_evaluations(session, base, mock, monkeypatch):
+    """Правка ревью этапа 3, №4: сбой на третьем ответе (как SIGKILL) — два оплаченных
+    ответа уже сохранены, после перезапуска в модель уходит только третий кандидат."""
+    v, p = base
+    mock(standard(v, p))
+    monkeypatch.setattr(ev, "PARALLEL", 1)
+    saved, original = [], ev._save
+
+    def crash_on_third(*args):
+        saved.append(args[2].id)
+        if len(saved) == 3:
+            raise RuntimeError("процесс убит")
+        return original(*args)
+
+    monkeypatch.setattr(ev, "_save", crash_on_third)
+    job = run(session, v)
+    assert job.status == "failed"
+    assert len(matches(session, v)) == 2
+    monkeypatch.setattr(ev, "_save", original)
+    job.status = "running"  # перезапуск продолжает прерванную задачу
+    session.commit()
+    run_pending()
+    session.expire_all()
+    assert len(matches(session, v)) == 3
+    assert len(mock.calls) == 3 + 1
+
+
+def test_checkset_counts_raw_model_answers(session, base, mock):
+    """Правка ревью этапа 3, №10: счётчики набора проверки смотрят сырой ответ модели,
+    поэтому «есть» без строк и несуществующие строки видны, хотя код их уже отбросил."""
+    import importlib
+
+    checkset = importlib.import_module("ev" + "al.run")
+    v, p = base
+    items = standard(v, p)
+    items[0]["response"]["checks"][0]["evidence_lines"] = None  # r1 «есть» без строк
+    items[1]["response"]["checks"][0]["evidence_lines"] = [90, 95]  # строк нет
+    mock(items)
+    run(session, v)
+    gromov = matches(session, v)["Громов"]
+    assert gromov.checks[0]["verdict"] == "no_data"  # код очистил
+    stats = checkset.check_evidence(session)
+    assert stats["«есть» без строк"] == 1 and stats["строк нет в резюме"] == 1

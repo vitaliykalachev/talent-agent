@@ -67,7 +67,9 @@ def test_background_import_reaches_done_and_counts_rows(client):
     home = client.get("/").text
     assert re.search(r'data-stat="candidates">\s*2\s*<', home)
     assert re.search(r'data-stat="duplicates">\s*1\s*<', home)
-    assert "Иванов Иван Петрович" in home  # очередь внимания: объединённый дубль
+    assert "Объединено автоматически" in home
+    merged = client.get("/duplicates/merged").text
+    assert "Иванов Иван Петрович" in merged and "Отменить объединение" in merged
 
 
 def test_candidates_search_filters_and_card(client):

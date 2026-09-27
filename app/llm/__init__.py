@@ -269,7 +269,7 @@ class MockLLM(LLM):
             found.sort(key=lambda i: "schema" not in self.fixtures[i])
             index = found[0] if found else None
             if index is None:
-                return "{}"
+                raise LLMError("нет записанного ответа")
             fixture = self.fixtures[index]
             answers = fixture.get("responses") or [fixture["response"]]
             answer = answers[min(self.served[index], len(answers) - 1)]

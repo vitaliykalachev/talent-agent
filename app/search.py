@@ -39,10 +39,14 @@ class Filters:
     min_years: float | None = None
     max_salary: int | None = None
     fresh: str = ""  # fresh | stale | ""
+    batch: int | None = None  # «Из загрузки…»
+    batch_label: str = ""
 
     def active(self) -> dict[str, str]:
         """Включённые фильтры с подписью для плашки."""
         labels = {}
+        if self.batch is not None:
+            labels["batch"] = self.batch_label.lower() or "из загрузки"
         if self.city:
             labels["city"] = f"город {self.city}"
         if self.min_years is not None:
@@ -69,6 +73,8 @@ class Filters:
             found.append(or_(amount.is_(None), amount <= self.max_salary))
         if self.fresh in ("fresh", "stale") and skip != "fresh":
             found.append(Candidate.stale.is_(self.fresh == "stale"))
+        if self.batch is not None and skip != "batch":
+            found.append(Candidate.batch_id == self.batch)
         return found
 
 

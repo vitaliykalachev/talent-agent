@@ -1,5 +1,6 @@
 """Экраны раздела 2 плана: главная, загрузка, кандидаты, карточка, настройки."""
 
+import math
 import re
 import tempfile
 import time
@@ -10,17 +11,18 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
-from sqlalchemy import func, select
-from sqlalchemy.orm import aliased
+from sqlalchemy import delete, func, select
 from starlette.datastructures import UploadFile
 
-from app import config, db, evaluate, parse
+from app import config, db, evaluate, mail, morning, parse, schedule
+from app.anonymize import anonymize
+from app.importer.dedup import auto_merged, open_pairs
 from app.importer.mapping import FIELDS
 from app.importer.normalize import looks_like_name
 from app.importer.pipeline import documents, load_table, new_batch, start_import
 from app.jobs import enqueue
 from app.llm import AuthError, get_llm
-from app.models import Candidate, Duplicate, ImportBatch, Job, Match, Vacancy
+from app.models import Candidate, Duplicate, Feedback, ImportBatch, Job, Match, NightRun, Vacancy
 from app.search import Filters, search
 from app.web import present
 
@@ -32,6 +34,7 @@ templates.env.filters["iso_short"] = lambda v: present.short_date(date.fromisofo
 templates.env.filters["num"] = present.num
 templates.env.filters["job_status"] = present.job_status
 templates.env.filters["stale_label"] = present.stale_label
+templates.env.filters["batch_label"] = present.batch_label
 templates.env.globals["PARSE_STATUS"] = present.PARSE_STATUS
 templates.env.globals["problem_summary"] = present.problem_summary
 templates.env.globals["remaining"] = present.remaining
@@ -127,18 +130,13 @@ def home(request: Request):
             "duplicates": s.scalar(
                 select(func.count(Duplicate.id)).where(Duplicate.status == "merged")
             ),
+            "auto_merged": auto_merged(s),
+            "possible": len(open_pairs(s)),
             "stale": count(active(), Candidate.stale.is_(True)),
             **parse_offer(s),
         }
-        main, old = aliased(Candidate), aliased(Candidate)
-        merged = s.execute(
-            select(Duplicate, main, old)
-            .join(main, main.id == Duplicate.candidate_a)
-            .join(old, old.id == Duplicate.candidate_b)
-            .where(Duplicate.status == "merged")
-            .order_by(Duplicate.id.desc())
-            .limit(10)
-        ).all()
+        night = s.scalar(select(NightRun).order_by(NightRun.id.desc()).limit(1))
+        tonight = morning.next_line(s)
         importing = list(
             s.scalars(
                 select(Job).where(Job.kind == "import", Job.status.in_(("queued", "running")))
@@ -153,21 +151,48 @@ def home(request: Request):
             )
         )
         flow = pipeline(s)
+        batch_names = present.batch_labels(s, [j.payload.get("batch_id") for j in with_errors])
     return render(
         request,
         "home.html",
+        batch_names=batch_names,
         stats=stats,
-        merged=merged,
+        night=night,
+        tonight=tonight,
         running=importing,
         with_errors=with_errors,
         flow=flow,
     )
 
 
+def history(s) -> list[dict]:
+    """История загрузок с итогами: сколько строк прочитали, сколько новых кандидатов,
+    сколько записей оказались дублями, сколько файлов не получилось прочитать."""
+    rows = []
+    for b in s.scalars(select(ImportBatch).order_by(ImportBatch.id.desc()).limit(30)):
+        mine = Candidate.batch_id == b.id
+        job = _batch_job(s, b.id)
+        rows.append(
+            {
+                "batch": b,
+                "label": present.batch_label(b),
+                "new": s.scalar(select(func.count(Candidate.id)).where(mine, active())),
+                "merged": s.scalar(
+                    select(func.count(Candidate.id)).where(
+                        mine, Candidate.duplicate_of.is_not(None)
+                    )
+                ),
+                "problems": len(present.problems(job)) if job else 0,
+                "job": job,
+            }
+        )
+    return rows
+
+
 @router.get("/upload", response_class=HTMLResponse)
 def upload_form(request: Request):
     with db.SessionLocal() as s:
-        batches = list(s.scalars(select(ImportBatch).order_by(ImportBatch.id.desc()).limit(10)))
+        batches = history(s)
         offer = parse_offer(s)
     return render(request, "upload.html", batches=batches, error=None, offer=offer)
 
@@ -181,7 +206,7 @@ async def upload(request: Request):
     has_table = isinstance(table, UploadFile) and bool(table.filename)
     if not has_table and not files:
         with db.SessionLocal() as s:
-            batches = list(s.scalars(select(ImportBatch).order_by(ImportBatch.id.desc()).limit(10)))
+            batches = history(s)
         return render(
             request,
             "upload.html",
@@ -377,11 +402,28 @@ def job_problems(request: Request, job_id: int):
 # ── Кандидаты ───────────────────────────────────────────────────────────────
 
 
+NUMBER_ERROR = "Укажите обычное число, например 3 или 150 000."
+
+
 def _number(value: str) -> float | None:
+    """Число фильтра; пусто или не число — None; inf, nan и больше миллиарда — 400."""
     try:
-        return float(value.replace(" ", "").replace(" ", "").replace(",", "."))
+        number = float(value.replace(" ", "").replace("\xa0", "").replace(",", "."))
     except ValueError:
         return None
+    if not math.isfinite(number) or abs(number) > 1e9:
+        raise HTTPException(400, NUMBER_ERROR)
+    return number
+
+
+def _small_int(value: str, default: int | None) -> int | None:
+    """Номер страницы или загрузки из адреса: не число — умолчание, огромное — 400."""
+    value = str(value).strip()
+    if not value.isdigit():
+        return default
+    if len(value) > 9:
+        raise HTTPException(400, NUMBER_ERROR)
+    return int(value)
 
 
 @router.get("/candidates", response_class=HTMLResponse)
@@ -392,26 +434,35 @@ def candidates(
     min_years: str = "",
     max_salary: str = "",
     fresh: str = "",
+    batch: str = "",
     sort: str = "meaning",
-    page: int = 1,
+    page: str = "1",
 ):
     salary = _number(max_salary)
-    filters = Filters(
-        city=city,
-        min_years=_number(min_years),
-        max_salary=int(salary) if salary is not None else None,
-        fresh=fresh if fresh in ("fresh", "stale") else "",
-    )
-    page = max(page, 1)
+    page = max(_small_int(page, 1), 1)
     params = {
         "q": q,
         "city": city,
         "min_years": min_years,
         "max_salary": max_salary,
         "fresh": fresh,
+        "batch": batch,
         "sort": sort,
     }
     with db.SessionLocal() as s:
+        batches = [
+            (b.id, present.batch_label(b))
+            for b in s.scalars(select(ImportBatch).order_by(ImportBatch.id.desc()))
+        ]
+        batch_id = _small_int(batch, None)
+        filters = Filters(
+            city=city,
+            min_years=_number(min_years),
+            max_salary=int(salary) if salary is not None else None,
+            fresh=fresh if fresh in ("fresh", "stale") else "",
+            batch=batch_id,
+            batch_label=dict(batches).get(batch_id, ""),
+        )
         result = search(s, q, filters, sort, page)
         cities = list(
             s.scalars(
@@ -428,6 +479,7 @@ def candidates(
         "page": page,
         "pages": max(1, -(-result.total // 20)),
         "cities": sorted(cities),
+        "batches": batches,
         "params": params,
         "without": lambda key: {**params, key: "", "page": ""},
         **params,
@@ -447,6 +499,14 @@ def candidate(request: Request, candidate_id: int, v: int | None = None):
             raise HTTPException(404)
         main = s.get(Candidate, c.duplicate_of) if c.duplicate_of else None
         merged = list(s.scalars(select(Candidate).where(Candidate.duplicate_of == c.id)))
+        undo = dict(
+            s.execute(
+                select(Duplicate.candidate_b, Duplicate.id).where(
+                    Duplicate.candidate_a == c.id, Duplicate.status == "merged"
+                )
+            ).all()
+        )
+        pair = next((d.id for d, a, b in open_pairs(s) if c.id in (a.id, b.id)), None)
         history = s.execute(
             select(Match, Vacancy)
             .join(Vacancy, Vacancy.id == Match.vacancy_id)
@@ -467,6 +527,8 @@ def candidate(request: Request, candidate_id: int, v: int | None = None):
         p=c.parsed or {},
         main=main,
         merged=merged,
+        undo=undo,
+        pair=pair,
         source=source,
         anchors=anchors,
         history=[(m, vac, evaluate.category(m)) for m, vac in history],
@@ -513,11 +575,48 @@ SETTING_FIELDS = [
     "price_eval_out",
     "usd_rub",
     "embed_model",
+    "night_time",
+    "night_days",
+    "smtp_host",
+    "smtp_port",
+    "smtp_user",
+    "smtp_to",
 ]
+SAMPLE_NAME = "Петров Сергей Иванович"
+SAMPLE = (
+    "Петров Сергей Иванович\nТел.: +7 912 345-67-89, petrov.s@mail.ru\n"
+    "Дата рождения: 12.03.1984\nЖелаемая должность: начальник цеха\n\nОпыт работы\n"
+    "2019 — по н.в.: АО «Литейный завод», начальник цеха литья\n"
+    "— руководил цехом из 40 человек, запустил участок литья под давлением\n"
+    "Рекомендации: Смирнова Ольга, главный инженер, +7 903 111-22-33"
+)
 
 
 class Ping(BaseModel):
     ok: bool
+
+
+def _sample() -> str:
+    """Пример того, что уходит модели: первое резюме базы, в пустой базе — образец."""
+    with db.SessionLocal() as s:
+        c = s.scalar(
+            select(Candidate)
+            .where(active(), func.length(Candidate.raw_text) > 200)
+            .order_by(Candidate.id)
+            .limit(1)
+        )
+    if c:
+        return parse.model_input(c)
+    return anonymize(SAMPLE, SAMPLE_NAME, ["+79123456789"], ["petrov.s@mail.ru"])
+
+
+def _memory() -> list:
+    with db.SessionLocal() as s:
+        return s.execute(
+            select(Feedback, Vacancy.title)
+            .outerjoin(Vacancy, Vacancy.id == Feedback.vacancy_id)
+            .order_by(Feedback.id.desc())
+        ).all()
 
 
 def _settings_page(request: Request, message: str | None = None, error: bool = False):
@@ -527,6 +626,9 @@ def _settings_page(request: Request, message: str | None = None, error: bool = F
         "settings.html",
         values=values,
         has_key=bool(config.get("llm_api_key")),
+        has_password=bool(config.get("smtp_password")),
+        sample=_sample(),
+        memory=_memory(),
         message=message,
         error=error,
     )
@@ -539,17 +641,32 @@ def settings_form(request: Request):
 
 @router.post("/settings", response_class=HTMLResponse)
 async def settings_save(request: Request):
-    form = await request.form()
+    error = _save_settings(await request.form())
+    if error:
+        return _settings_page(request, error, error=True)
+    return _settings_page(request, "Сохранено.")
+
+
+def _save_settings(form) -> str | None:
+    """Сохраняет присланные поля «Настроек»; ошибка ввода — текст, ничего не сохранено."""
     values = {key: str(form.get(key, "")).strip() for key in SETTING_FIELDS if key in form}
-    if key := str(form.get("llm_api_key", "")).strip():
-        values["llm_api_key"] = key  # пустое поле — ключ не меняется
+    for secret in ("llm_api_key", "smtp_password"):
+        if value := str(form.get(secret, "")).strip():
+            values[secret] = value  # пустое поле — ключ или пароль не меняется
+    if "night_time" in values and not schedule.parse_time(values["night_time"]):
+        return "Время укажите как 02:00."
+    if values.get("night_days", "daily") not in schedule.DAYS:
+        values.pop("night_days")
+    if values.get("smtp_port") and not values["smtp_port"].isdigit():
+        return "Порт почтового сервера — число, например 587."
     model_changed = values.get("embed_model") not in (None, config.get("embed_model"))
     config.save(values)
+    schedule.reschedule()
     if model_changed:  # отпечатки другой модели несравнимы — пересчитываем базу
         with db.SessionLocal() as s:
             enqueue(s, "embed", {})
             s.commit()
-    return _settings_page(request, "Сохранено.")
+    return None
 
 
 @router.post("/settings/check", response_class=HTMLResponse)
@@ -569,15 +686,19 @@ def settings_check(request: Request):
     return _settings_page(request, f"Подключение работает: ответ за {seconds} с.")
 
 
-STUBS = {"/morning": "Утро"}
+@router.post("/settings/mail-test", response_class=HTMLResponse)
+async def settings_mail_test(request: Request):
+    """Кнопка стоит в форме почты: сначала сохраняем то, что в полях, потом шлём."""
+    error = _save_settings(await request.form()) or mail.send_test()
+    if error:
+        return _settings_page(request, error, error=True)
+    return _settings_page(request, f"Пробное письмо ушло на {config.get('smtp_to')}.")
 
 
-def _stub(title: str):
-    def view(request: Request):
-        return render(request, "stub.html", title=title)
-
-    return view
-
-
-for _path, _title in STUBS.items():
-    router.add_api_route(_path, _stub(_title), response_class=HTMLResponse, methods=["GET"])
+@router.post("/feedback/clear")
+def feedback_clear():
+    """«Забыть все исправления» в «Настройках»."""
+    with db.SessionLocal() as s:
+        s.execute(delete(Feedback))
+        s.commit()
+    return RedirectResponse("/settings#memory", status_code=303)

@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Похоже на дубль · Кадровый агент{% endblock %}
+{% block content %}
+<p><a href="/">← Главная</a></p>
+<h1>Похоже на дубль: {{ rows|length }}</h1>
+<p class="sub">Записи похожи, но сами мы их не объединяем: решите по каждой паре. <a href="/duplicates/merged">Объединённые автоматически</a></p>
+{% if rows %}
+<div class="tablewrap">
+<table class="stack">
+  <thead><tr><th>Пара</th><th>Почему похожи</th><th></th></tr></thead>
+  <tbody>
+  {% for dup, a, b, reason in rows %}
+  <tr>
+    <td class="name" data-label="Пара">{{ a.full_name or "Без имени" }} — {{ b.full_name or "Без имени" }}{% if dup.postponed_at %} <small>отложено</small>{% endif %}</td>
+    <td data-label="Почему похожи">{{ reason }}</td>
+    <td><a class="button ghost" href="/duplicates/{{ dup.id }}">Проверить</a></td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<div class="callout ok"><p>Непроверенных пар нет.</p></div>
+{% endif %}
+{% endblock %}

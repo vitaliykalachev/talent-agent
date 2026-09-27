@@ -1,10 +1,10 @@
-"""Готовая демо-вакансия с записанными ответами модели: «Результат по вакансии» без ключа.
+"""Демо-вакансия: «Результат по вакансии» и «Утро» без ключа.
 
-Ответы модели для демо не берутся из сети, их пишет код по тексту резюме — так же,
-как записанные ответы разбора в `app/demo.py`: вердикт по требованию ставится по
-ключевым словам в строке обезличенного резюме, строка становится опорой довода.
-Дальше всё идёт обычным путём: разбор вакансии и оценка через мок, проверка строк,
-балл и категория считаются кодом.
+В `make demo` ответы модели по ней записаны с живой модели (`app/demo_data/llm/`).
+Для тестов ответы пишет код по тексту резюме, как и ответы разбора в `app/demo.py`:
+вердикт по требованию ставится по ключевым словам в строке обезличенного резюме,
+строка становится опорой довода. Дальше всё идёт обычным путём: разбор вакансии и
+оценка через мок, проверка строк, балл и категория считаются кодом.
 """
 
 import json
@@ -13,7 +13,6 @@ from pathlib import Path
 
 from app import db
 from app import evaluate as ev
-from app.jobs import run_pending
 from app.models import Candidate, Vacancy
 
 DESCRIPTION = (
@@ -105,24 +104,29 @@ def answer(v: Vacancy, c: Candidate) -> dict:
     }
 
 
-def create(fixtures: Path) -> Vacancy:
-    """Создаёт вакансию обычным путём (разбор описания и оценка через мок)."""
-    draft = {
-        "match": DESCRIPTION[:60],
-        "schema": "VacancyDraft",
-        "response": {"title": "Начальник литейного производства", "requirements": REQUIREMENTS},
-    }
-    (fixtures / "vacancy.json").write_text(json.dumps([draft], ensure_ascii=False), "utf-8")
+def create(fixtures: Path | None = None) -> Vacancy:
+    """Создаёт вакансию «Оценивать каждую ночь» обычным путём: разбор описания через
+    модель из настроек. Оценивает её ночной прогон.
+
+    `fixtures` — папка мок-ответов, куда код пишет ответы по ключевым словам (для
+    тестов); без неё ответы берутся из записанных с живой модели."""
+    if fixtures:
+        draft = {
+            "match": DESCRIPTION[:60],
+            "schema": "VacancyDraft",
+            "response": {"title": "Начальник литейного производства", "requirements": REQUIREMENTS},
+        }
+        (fixtures / "vacancy.json").write_text(json.dumps([draft], ensure_ascii=False), "utf-8")
     with db.SessionLocal() as s:
         v = Vacancy(title="", description=DESCRIPTION, hard_filters={}, top_n=40)
+        v.schedule_enabled = True
         s.add(v)
         s.commit()
         ev.parse_vacancy(s, v)
-        ids = ev.pool(s, v)[: v.top_n]
-        answers = [answer(v, s.get(Candidate, cid)) for cid in ids]
-        (fixtures / "evaluations.json").write_text(
-            json.dumps(answers, ensure_ascii=False, indent=1), "utf-8"
-        )
-        ev.start(s, v, v.top_n)
-    run_pending()
+        if fixtures:
+            ids = ev.pool(s, v)[: v.top_n]
+            answers = [answer(v, s.get(Candidate, cid)) for cid in ids]
+            (fixtures / "evaluations.json").write_text(
+                json.dumps(answers, ensure_ascii=False, indent=1), "utf-8"
+            )
     return v

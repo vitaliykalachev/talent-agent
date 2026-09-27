@@ -15,16 +15,16 @@ import hashlib
 import json
 import re
 import threading
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, BeforeValidator, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app import config, db, search
-from app.anonymize import anonymize, numbered, valid_lines
+from app.anonymize import anonymize, line_range, numbered, valid_lines
 from app.jobs import enqueue, stopping
 from app.llm import AuthError, LLMError, get_llm
 from app.models import Candidate, Feedback, Job, Match, Vacancy
@@ -61,11 +61,19 @@ CHANGE = {
     "vacancy_changed": "вы изменили требования вакансии",
 }
 
+# Возраст числами («25–35 лет», «45+») — примета только там, где речь не об опыте,
+# стаже или численности команды: «Опыт 10+ лет», «Команда 20+ человек» — нормальные
+# требования. Пол — только в связке «мужского/женского пола»: «Женская одежда» — товар.
+NOT_EXPERIENCE = r"(?![^\n]*(?:опыт|стаж|человек|сотрудник|подчинен|команд))"
 DISCRIMINATORY_RE = re.compile(
     r"возраст|\bлет\s+до\b|\bдо\s+\d{2}\s+лет|\bот\s+\d{2}\s+до\s+\d{2}\s+лет|моложе|старше\s+\d"
     r"|мужчин|женщин|\bпол\b|национальн|славян|внешност|семейн|замуж|женат|без\s+детей"
-    r"|\bдет(?:и|ей)\b|беремен|прописк",
-    re.IGNORECASE,
+    r"|\bдет(?:и|ей)\b|беремен|прописк|девушк|\bпар(?:ень|ни|ня)\b"
+    r"|молод(?:ой|ая|ые|ых|ого|ому|ым|ую)\b|холост|детьми|бездет"
+    r"|(?:мужск|женск)\w*\s+пол[аеу]?\b"
+    rf"|^{NOT_EXPERIENCE}[^\n]*?\b\d{{2}}\s*[–—-]\s*\d{{2}}\s*лет"
+    rf"|^{NOT_EXPERIENCE}(?=[^\n]*(?:возраст|кандидат|не\s+старше))[^\n]*?\b\d{{2}}\s*\+",
+    re.IGNORECASE | re.MULTILINE,
 )
 VAGUE_RE = re.compile(
     r"^(?:есть\s+|наличие\s+|иметь\s+)?опыт(?:\s+работы)?\.?$|^хорош\w*\s|^отличн\w*\s"
@@ -281,6 +289,8 @@ def plan(
     todo = []
     for cid in ordered:
         c = session.get(Candidate, cid)
+        if c is None:  # кандидата удалили или id не из базы — пропускаем
+            continue
         m = matches.get(cid)
         if m and m.decision == "reject":
             continue
@@ -344,10 +354,18 @@ def estimate(session: Session, v: Vacancy, limit: int, order=None) -> dict:
 # ── Оценка одного кандидата ─────────────────────────────────────────────────
 
 
+# Модель иногда присылает [31] или [7, 21, 23] вместо [от, до]: читаем как [31, 31] и
+# [7, 23]. Схема для модели — ровно два целых.
+Lines = Annotated[
+    Annotated[list[int], Field(min_length=2, max_length=2)] | None,
+    BeforeValidator(line_range),
+]
+
+
 class Check(BaseModel):
     requirement_id: str
     verdict: Literal["met", "partial", "not_met", "no_data"]
-    evidence_lines: list[int] | None = Field(
+    evidence_lines: Lines = Field(
         None, description="Номера строк резюме [от, до], на которых основан вердикт"
     )
     note: str = Field("", description="Коротко, что именно в этих строках")
@@ -355,7 +373,7 @@ class Check(BaseModel):
 
 class Concern(BaseModel):
     text: str
-    evidence_lines: list[int] | None = Field(None, description="[от, до] или null")
+    evidence_lines: Lines = Field(None, description="[от, до] или null")
 
 
 class Evaluation(BaseModel):
@@ -424,6 +442,24 @@ def model_text(c: Candidate) -> str:
     return anonymize(c.raw_text[:MAX_CHARS], c.full_name, c.phones, c.emails, c.links)
 
 
+SENTENCE_RE = re.compile(r"(?<=[.!?;])\s+|\n+")
+
+
+def fair_description(v: Vacancy) -> str:
+    """Описание без предложений про возраст, пол, семью и т. п.: модель оценки не должна
+    их видеть. Вырезается предложение, где срабатывает DISCRIMINATORY_RE или стоит
+    требование, помеченное как дискриминационное."""
+    flagged = [r["name"].lower() for r in v.requirements if r.get("flag") == "discriminatory"]
+    kept = [
+        part
+        for part in SENTENCE_RE.split(v.description or "")
+        if part.strip()
+        and not DISCRIMINATORY_RE.search(part)
+        and not any(name in part.lower() for name in flagged)
+    ]
+    return " ".join(kept)
+
+
 def prompt(session: Session, v: Vacancy, c: Candidate, text: str) -> str:
     reqs = "\n".join(f"- {r['id']} [{KINDS[r['kind']].lower()}] {r['name']}" for r in used(v))
     corrections = [
@@ -432,7 +468,7 @@ def prompt(session: Session, v: Vacancy, c: Candidate, text: str) -> str:
     parts = [
         f"Вакансия {v.id}, кандидат {c.id}",
         f"Вакансия: {v.title}",
-        f"Описание вакансии:\n{v.description}",
+        f"Описание вакансии:\n{fair_description(v)}",
         f"Требования:\n{reqs}",
     ]
     if corrections:
@@ -480,6 +516,8 @@ def score(checks: list[dict]) -> int:
     «нет» или подтверждённое «чего точно не надо» — не выше 30."""
     counted = [ch for ch in checks if ch["kind"] in ("must", "nice")]
     total = sum(ch["weight"] for ch in counted)
+    if not total:  # требования удалили, пока оценка стояла в очереди
+        return 0
     value = round(100 * sum(ch["weight"] * VALUES[ch["verdict"]] for ch in counted) / total)
     return min(value, CAP) if vetoed(checks) else value
 
@@ -497,7 +535,8 @@ def category(m: Match) -> str:
     подтверждено большинство желательных; «Можно рассмотреть» — обязательные есть, по
     части желательных нет подтверждения. Где правила не решают (обязательное частично
     или без данных, вакансия без обязательных), работают пороги 75 и 55 — но без всех
-    обязательных выше «Можно рассмотреть» кандидат не поднимается."""
+    обязательных выше «Можно рассмотреть» кандидат не поднимается, а «Можно рассмотреть»
+    требует хотя бы половины обязательных «есть» или «частично»."""
     if m.status != "ok" or m.score is None:
         return FAILED
     if vetoed(m.checks):
@@ -509,6 +548,8 @@ def category(m: Match) -> str:
         return FIT if not nice or confirmed > len(nice) / 2 else MAYBE
     if not must and m.score >= FIT_FROM:
         return FIT
+    if 2 * sum(ch["verdict"] in ("met", "partial") for ch in must) < len(must):
+        return UNFIT  # меньше половины обязательных хотя бы частично — не «Можно рассмотреть»
     return MAYBE if m.score >= MAYBE_FROM else UNFIT
 
 
@@ -546,6 +587,8 @@ def evaluate_one(llm, session: Session, v: Vacancy, c: Candidate) -> dict:
     text = model_text(c)
     if len(text.strip()) < MIN_CHARS:
         raise LLMError("в резюме нет текста")
+    if not scored(v):
+        raise LLMError("у вакансии нет требований, оценивать не по чему")
     answer = llm.complete_structured(Evaluation, SYSTEM_EVAL, prompt(session, v, c, text))
     checks = checked(answer, used(v), text)
     concerns = []
@@ -556,6 +599,7 @@ def evaluate_one(llm, session: Session, v: Vacancy, c: Candidate) -> dict:
         "status": "ok",
         "error": None,
         "checks": checks,
+        "raw_checks": [ch.model_dump() for ch in answer.checks],
         "score": score(checks),
         "reasons": reasons(checks),
         "concerns": concerns,
@@ -575,7 +619,9 @@ def start(session: Session, v: Vacancy, limit: int, ids: list[int] | None = None
     не оплачивает прогон дважды."""
     with _start_lock:
         live = session.scalars(
-            select(Job).where(Job.kind == "evaluate", Job.status.in_(("queued", "running")))
+            select(Job).where(
+                Job.kind == "evaluate", Job.status.in_(("queued", "running", "paused"))
+            )
         )
         if job := next((j for j in live if j.payload.get("vacancy_id") == v.id), None):
             return job
@@ -620,33 +666,47 @@ def run_evaluate(job_id: int) -> None:
         job.status, job.total = "running", len(todo) + job.progress
         session.commit()
         errors = job.error.splitlines() if job.error else []
+        known = {c.id for c, _ in todo} | set(ranks)
+        errors += [
+            f"{cid}: такого кандидата в базе нет"
+            for cid in job.payload.get("ids") or []
+            if cid not in known and session.get(Candidate, cid) is None
+        ]
+        job.error = "\n".join(errors) or None
         with ThreadPoolExecutor(PARALLEL) as ex:
             for i in range(0, len(todo), BATCH):
                 session.refresh(job)
                 if stopping.is_set() or job.status == "paused":
                     return
-                part = todo[i : i + BATCH]
-                results = list(ex.map(lambda item: _attempt(llm, v, item[0]), part))
-                if auth := next((r for r in results if isinstance(r, AuthError)), None):
-                    job.status, job.error = "failed", str(auth)
-                    job.finished_at = datetime.now()
-                    session.commit()
-                    return
-                for (c, reason), result in zip(part, results, strict=True):
+                futures = {ex.submit(_attempt, llm, v, c): (c, r) for c, r in todo[i : i + BATCH]}
+                # Каждый ответ сохраняется, как только пришёл: после сбоя или остановки
+                # оплаченные оценки не пропадают и повторно не отправляются.
+                for future in as_completed(futures):
+                    c, reason = futures[future]
+                    result = future.result()
+                    if isinstance(result, AuthError):
+                        for other in futures:
+                            other.cancel()
+                        job.status, job.error = "failed", str(result)
+                        job.finished_at = datetime.now()
+                        session.commit()
+                        return
                     if isinstance(result, Exception):
                         errors.append(f"{c.id}: {result}")
                         result = {"status": "failed", "error": str(result)}
                     _save(session, v, c, reason, result, llm.model)
                     session.get(Match, (v.id, c.id)).rank = ranks.get(c.id)
-                job.progress += len(part)
-                job.error = "\n".join(errors) or None
-                job.payload = {
-                    **job.payload,
-                    "tokens_in": job.payload.get("tokens_in", 0) + llm.tokens_in,
-                    "tokens_out": job.payload.get("tokens_out", 0) + llm.tokens_out,
-                }
-                llm.tokens_in = llm.tokens_out = 0
-                session.commit()
+                    job.progress += 1
+                    job.error = "\n".join(errors) or None
+                    with llm._lock:
+                        spent = llm.tokens_in, llm.tokens_out
+                        llm.tokens_in = llm.tokens_out = 0
+                    job.payload = {
+                        **job.payload,
+                        "tokens_in": job.payload.get("tokens_in", 0) + spent[0],
+                        "tokens_out": job.payload.get("tokens_out", 0) + spent[1],
+                    }
+                    session.commit()
         job.status, job.finished_at = "done", datetime.now()
         session.commit()
 

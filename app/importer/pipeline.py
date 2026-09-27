@@ -14,7 +14,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app import db
-from app.importer.dedup import merge_exact_duplicates
+from app.importer.dedup import find_possible, merge_exact_duplicates
 from app.importer.mapping import guess_mapping
 from app.importer.normalize import (
     extract_birth_year,
@@ -272,6 +272,7 @@ def run_import(job_id: int) -> None:
             session.commit()
 
         merge_exact_duplicates(session)
+        find_possible(session)
         job.status = "done"
         job.finished_at = datetime.now()
         session.commit()

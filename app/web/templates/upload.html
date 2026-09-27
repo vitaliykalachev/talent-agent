@@ -24,17 +24,19 @@
 </form>
 
 {% if batches %}
-<h2>Прошлые загрузки</h2>
+<h2>История загрузок</h2>
 <div class="tablewrap">
 <table class="stack">
-  <thead><tr><th>Загрузка</th><th>Файл</th><th class="num">Записей</th><th>Когда</th></tr></thead>
+  <thead><tr><th>Загрузка</th><th class="num">Прочитали</th><th class="num">Новых кандидатов</th><th class="num">Оказались дублями</th><th>Итог</th></tr></thead>
   <tbody>
-  {% for b in batches %}
+  {% for row in batches %}
+  {% set b = row.batch %}
   <tr>
-    <td class="name" data-label="Загрузка"><a href="/upload/{{ b.id }}">Загрузка №{{ b.id }}</a></td>
-    <td data-label="Файл">{{ b.file_name or "только резюме" }}</td>
-    <td class="num" data-label="Записей">{{ b.rows_ok }} из {{ b.rows_total }}</td>
-    <td data-label="Когда">{{ b.created_at.strftime("%d.%m.%Y %H:%M") }}</td>
+    <td class="name" data-label="Загрузка"><a href="/upload/{{ b.id }}">{{ row.label }}</a></td>
+    <td class="num" data-label="Прочитали">{{ b.rows_ok|num }} из {{ b.rows_total|num }}</td>
+    <td class="num" data-label="Новых кандидатов">{% if row.new %}<a href="/candidates?batch={{ b.id }}">{{ row.new|num }}</a>{% else %}0{% endif %}</td>
+    <td class="num" data-label="Оказались дублями">{{ row.merged|num }}</td>
+    <td data-label="Итог">{% if not row.job %}Ждёт проверки колонок{% elif row.problems %}<a href="/jobs/{{ row.job.id }}/problems">{{ row.job|job_status }}: {{ row.problems }}</a>{% else %}{{ row.job|job_status }}{% endif %}</td>
   </tr>
   {% endfor %}
   </tbody>
