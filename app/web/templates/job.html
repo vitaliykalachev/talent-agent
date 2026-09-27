@@ -1,19 +1,22 @@
 {% set pct = (100 * job.progress // job.total) if job.total else 0 %}
 {% set live = job.status in ("queued", "running") %}
 <div class="card" id="job-{{ job.id }}"{% if live %} hx-get="/jobs/{{ job.id }}" hx-trigger="every 2s" hx-swap="outerHTML"{% endif %}>
-  {% if job.status == "done" %}
-  <h4>Готово: {{ job.progress }} из {{ job.total }}</h4>
+  {% if job.status == "done" and job|job_status == "Не получилось" %}
+  <h4>Не получилось</h4>
+  <p>{{ problem_summary(job) }}. <a href="/jobs/{{ job.id }}/problems">Показать список</a></p>
+  {% elif job.status == "done" %}
+  <h4>Готово: {{ job|import_done }}</h4>
   <div class="bar-track"><div class="bar-fill done" style="width:100%"></div></div>
   <p><a href="/candidates">Открыть кандидатов</a> · <a href="/">На главную</a></p>
   {% elif job.status == "failed" %}
   <h4>Не получилось</h4>
   <p>{{ job.error }}</p>
   {% else %}
-  <h4>{{ "В очереди" if job.status == "queued" else "Читаем файлы" }}: {{ job.progress|num }} из {{ job.total|num if job.total else "…" }}</h4>
+  <h4>{{ "В очереди" if job.status == "queued" else "Агент читает файлы" }}: {{ job.progress|num }} из {{ job.total|num if job.total else "…" }}</h4>
   <div class="bar-track"><div class="bar-fill" style="width:{{ pct }}%"></div></div>
   <p><small>Можно закрыть вкладку и работать дальше: после перезапуска загрузка продолжится с того же места.</small></p>
   {% endif %}
-  {% if job.error and job.status != "failed" %}
+  {% if job.error and job.status != "failed" and job|job_status != "Не получилось" %}
   <p><small>{{ problem_summary(job) }}. <a href="/jobs/{{ job.id }}/problems">Показать список</a></small></p>
   {% endif %}
 </div>

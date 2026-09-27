@@ -1,7 +1,7 @@
 <div id="eval-job"{% if job %} hx-get="/vacancies/{{ v.id }}/job" hx-trigger="every 2s" hx-swap="outerHTML"{% endif %}>
 {% if job %}
   {% set pct = (100 * job.progress // job.total) if job.total else 0 %}
-  <h4>{% if job.status == "queued" %}Оценка в очереди{% elif job.status == "paused" %}Оценка приостановлена{% else %}Оцениваем кандидатов: {{ job.progress }} из {{ job.total or "…" }}{% endif %}</h4>
+  <h4>{% if job.status == "queued" %}Оценка в очереди{% elif job.status == "paused" %}Оценка приостановлена{% else %}Агент оценивает кандидатов: {{ job.progress }} из {{ job.total or "…" }}{% endif %}</h4>
   <div class="bar-track"><div class="bar-fill" style="width:{{ pct }}%"></div></div>
   <p><small>Можно закрыть вкладку: оценка идёт без вас, результаты появляются по мере готовности.</small></p>
 {% else %}

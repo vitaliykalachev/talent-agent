@@ -1,0 +1,24 @@
+{# «Что получится» на шаге колонок: пересчитывается, когда рекрутёр меняет значение колонки. #}
+{% set o = outcome %}
+<div class="card outcome" id="outcome">
+  <h4>Что получится</h4>
+  <ul>
+    <li>Агент загрузит {{ o.load|count("кандидата", "кандидатов", "кандидатов") }}{% if docs_count %} и {{ docs_count|count("файл", "файла", "файлов") }} резюме{% endif %}.</li>
+    <li>{% if o.duplicates %}Точные дубли агент объединит сам: {{ o.duplicates|num }} — общий телефон или почта и то же ФИО.{% else %}Точных дублей среди строк нет.{% endif %}</li>
+    {% if o.skip %}<li>Агент пропустит {{ o.skip|count("строку", "строки", "строк") }}: в них нет ни ФИО, ни телефона, ни почты, ни текста резюме.</li>{% endif %}
+  </ul>
+  {% if o.nameless %}
+  <fieldset class="choose">
+    <legend>В {{ o.nameless|count("строке", "строках", "строках") }} нет ФИО — загрузим как «Без имени»?</legend>
+    <label><input type="radio" name="nameless" value="keep" checked> Да, загрузить как «Без имени»</label>
+    <label><input type="radio" name="nameless" value="skip"> Нет, пропустить эти строки</label>
+  </fieldset>
+  {% endif %}
+  {% if o.load %}
+  <button class="button" type="submit">Загрузить {{ o.load|count("кандидата", "кандидатов", "кандидатов") }}</button>
+  {% elif docs_count %}
+  <button class="button" type="submit">Загрузить {{ docs_count|count("файл", "файла", "файлов") }} резюме</button>
+  {% else %}
+  <p>Загружать нечего: выберите, в какой колонке ФИО, телефон или почта.</p>
+  {% endif %}
+</div>

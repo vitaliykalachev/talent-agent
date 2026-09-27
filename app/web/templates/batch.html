@@ -1,20 +1,21 @@
 {% extends "base.html" %}
 {% block title %}{{ batch|batch_label }} · Кадровый агент{% endblock %}
 {% block content %}
+<p class="back"><a href="/upload">← Загрузка базы</a></p>
 <h1>{{ batch|batch_label }}</h1>
 <p class="sub">
-  {% if batch.file_name %}Выгрузка «{{ batch.file_name }}»: {{ rows_count }} строк.{% endif %}
-  Файлов резюме: {{ docs_count }}.
+  {% if batch.file_name %}Выгрузка «{{ batch.file_name }}»: {{ rows_count|count("строка", "строки", "строк") }}.{% endif %}
+  Файлов резюме: {{ docs_count|num }}.
 </p>
 
 {% if job %}{% include "job.html" %}{% endif %}
 {% include "parse_offer.html" %}
 
-<form method="post" action="/upload/{{ batch.id }}/start">
+<form method="post" action="/upload/{{ batch.id }}/start"{% if not job %} hx-post="/upload/{{ batch.id }}/preview" hx-trigger="change from:select" hx-target="#outcome" hx-swap="outerHTML"{% endif %}>
 {% if columns %}
 <h2>Какая колонка что значит</h2>
 {% if not job %}
-<p class="sub">Мы угадали значения по названиям и содержимому колонок. Проверьте и поправьте, если нужно.</p>
+<p class="sub">Агент угадал значения по названиям и содержимому колонок. Проверьте колонки с пометкой «проверьте» и «не понял — выберите».</p>
 {% endif %}
 <div class="tablewrap">
 <table class="stack">
@@ -30,6 +31,7 @@
         <option value="{{ key }}"{% if key == col.field %} selected{% endif %}>{{ label }}</option>
         {% endfor %}
       </select>
+      {% if not job %}<span class="pill {{ 'go' if col.label == 'совпадает' else 'mid' if col.label == 'проверьте' else 'stop' }}">{{ col.label }}</span>{% endif %}
     </td>
   </tr>
   {% endfor %}
@@ -37,6 +39,6 @@
 </table>
 </div>
 {% endif %}
-{% if not job %}<button class="button" type="submit">Начать разбор</button>{% endif %}
+{% if not job %}{% include "batch_outcome.html" %}{% endif %}
 </form>
 {% endblock %}

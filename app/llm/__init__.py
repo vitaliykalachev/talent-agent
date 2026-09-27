@@ -38,6 +38,7 @@ class AuthError(LLMError):
 
 AUTH_MESSAGE = "Ключ доступа не подошёл. Проверьте, что скопировали его целиком."
 BUSY_MESSAGE = "сервис ИИ не ответил"
+NO_ANSWER = "ответ модели не получен"  # у записанных ответов нет ответа на этот запрос
 
 
 class LLM:
@@ -47,6 +48,7 @@ class LLM:
 
     def __init__(self, model: str):
         self.model = model
+        self.retries = NETWORK_RETRIES  # «Проверить подключение» — одна попытка
         self.tokens_in = 0
         self.tokens_out = 0
         self._lock = threading.Lock()
@@ -67,7 +69,7 @@ class LLM:
         raise AssertionError("недостижимо")
 
     def _send(self, schema, system, user):
-        for attempt in range(NETWORK_RETRIES + 1):
+        for attempt in range(self.retries + 1):
             try:
                 return self._call(schema, system, user)
             except self.auth_errors as exc:
@@ -80,7 +82,7 @@ class LLM:
                             f"сервис ИИ отклонил запрос (код {code}); "
                             "проверьте модель и адрес в «Настройках»"
                         ) from exc
-                if attempt == NETWORK_RETRIES:
+                if attempt == self.retries:
                     raise LLMError(BUSY_MESSAGE) from exc
                 time.sleep(RETRY_PAUSE * (attempt + 1))
         raise AssertionError("недостижимо")
@@ -135,12 +137,12 @@ def _validate(schema: type[BaseModel], data):
 
 
 class AnthropicLLM(LLM):
-    def __init__(self, model: str, base_url: str, api_key: str):
+    def __init__(self, model: str, base_url: str, api_key: str, timeout: float = 120):
         import anthropic
 
         super().__init__(model)
         self.client = anthropic.Anthropic(
-            base_url=base_url or None, api_key=api_key, max_retries=0, timeout=120
+            base_url=base_url or None, api_key=api_key, max_retries=0, timeout=timeout
         )
         # OverloadedError (529) в SDK наследует APIStatusError, а не InternalServerError.
         self.network_errors = (
@@ -181,12 +183,12 @@ class AnthropicLLM(LLM):
 
 
 class OpenAILLM(LLM):
-    def __init__(self, model: str, base_url: str, api_key: str):
+    def __init__(self, model: str, base_url: str, api_key: str, timeout: float = 120):
         import openai
 
         super().__init__(model)
         self.client = openai.OpenAI(
-            base_url=base_url or None, api_key=api_key, max_retries=0, timeout=120
+            base_url=base_url or None, api_key=api_key, max_retries=0, timeout=timeout
         )
         self.network_errors = (
             openai.APIConnectionError,
@@ -268,8 +270,8 @@ class MockLLM(LLM):
             ]
             found.sort(key=lambda i: "schema" not in self.fixtures[i])
             index = found[0] if found else None
-            if index is None:
-                raise LLMError("нет записанного ответа")
+            if index is None:  # на экране — без служебных подробностей записи
+                raise LLMError(NO_ANSWER)
             fixture = self.fixtures[index]
             answers = fixture.get("responses") or [fixture["response"]]
             answer = answers[min(self.served[index], len(answers) - 1)]
@@ -307,13 +309,18 @@ def _resolve_lines(answer, user: str):
     return {k: _resolve_lines(v, user) for k, v in answer.items()}
 
 
-def get_llm(purpose: str = "parse") -> LLM:
-    """Модель для разбора резюме (parse) или оценки (eval) по текущим настройкам."""
-    model = config.get(f"llm_model_{purpose}")
-    provider = config.get("llm_provider")
+def get_llm(purpose: str = "parse", overrides: dict | None = None, timeout: float = 120) -> LLM:
+    """Модель для разбора резюме (parse) или оценки (eval) по текущим настройкам;
+    `overrides` — несохранённые значения из формы «Настроек» для проверки подключения."""
+
+    def value(key: str) -> str:
+        return (overrides or {}).get(key) or config.get(key)
+
+    model = value(f"llm_model_{purpose}")
+    provider = value("llm_provider")
     if provider == "mock":
         return MockLLM(model, config.get("llm_fixtures"))
-    base_url, key = config.get("llm_base_url"), config.get("llm_api_key")
+    base_url, key = value("llm_base_url"), value("llm_api_key")
     if provider == "openai":
-        return OpenAILLM(model, base_url, key)
-    return AnthropicLLM(model, base_url, key)
+        return OpenAILLM(model, base_url, key, timeout)
+    return AnthropicLLM(model, base_url, key, timeout)

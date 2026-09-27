@@ -1,6 +1,10 @@
 import os
 
 # Тесты не читают рабочий .env и не ходят в сеть: провайдер и ключ задаются в самих тестах.
+# markitdown при импорте сам ищет .env вверх по папкам (load_dotenv) и находит рабочий,
+# поэтому он импортируется до очистки окружения.
+import markitdown  # noqa: E402, F401
+
 os.environ["TA_ENV_FILE"] = os.devnull
 for _name in ("LLM_PROVIDER", "LLM_BASE_URL", "LLM_API_KEY", "LLM_MODEL_PARSE", "LLM_MODEL_EVAL"):
     os.environ.pop(_name, None)

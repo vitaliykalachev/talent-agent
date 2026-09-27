@@ -1,13 +1,16 @@
 {% extends "base.html" %}
 {% block title %}{{ v.title or "Вакансия" }} · Кадровый агент{% endblock %}
 {% block content %}
-<p><a href="/vacancies">← Все вакансии</a></p>
+<p class="back"><a href="/vacancies">← Все вакансии</a></p>
 <div class="headline">
   <h1>{{ v.title or "Без названия" }}</h1>
   {% if evaluated %}<a class="button ghost" href="/vacancies/{{ v.id }}/results">Результат по вакансии</a>{% endif %}
 </div>
 <details class="card"><summary>Описание вакансии</summary><p class="prewrap">{{ v.description }}</p></details>
 
+{% if unfair %}
+<div class="callout warn unfair"><p>Из описания не взяли: {% for part in unfair %}«{{ part }}»{% if not loop.last %}, {% endif %}{% endfor %} — возраст, пол и семья в оценке не участвуют.</p></div>
+{% endif %}
 <section class="card" id="portrait">
   <h2>Портрет кандидата</h2>
   <p class="sub">Так агент понял вакансию. Удалите лишнее, поправьте и допишите: по этим требованиям он проверит каждое резюме.</p>

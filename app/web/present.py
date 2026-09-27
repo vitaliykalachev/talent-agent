@@ -1,5 +1,6 @@
 """Как показывать данные на экране: числа, сроки, деньги, статусы, подсветка исходника."""
 
+import re
 import time
 from collections import Counter
 
@@ -31,6 +32,46 @@ def plural(n: int, one: str, few: str, many: str) -> str:
     return {1: one, 2: few, 3: few, 4: few}.get(n % 10, many)
 
 
+def count(n: int, one: str, few: str, many: str) -> str:
+    """Число со словом в нужной форме: «1 кандидат», «3 записи», «35 000 файлов»."""
+    return f"{num(n)}{NBSP}{plural(int(n), one, few, many)}"
+
+
+def short_name(full: str | None) -> str:
+    """«Давыдов Андрей Михайлович» → «Давыдов А. М.»."""
+    parts = (full or "").split()
+    if not parts:
+        return "Без имени"
+    return " ".join([parts[0], *(f"{w[0]}." for w in parts[1:3])])
+
+
+def years(value) -> str:
+    """Стаж словами: «1 год», «3 года», «11,5 года», «20 лет»."""
+    if value is None:
+        return "—"
+    text = f"{value:g}".replace(".", ",")
+    if float(value) != int(value):
+        return f"{text}{NBSP}года"
+    return f"{text}{NBSP}{plural(int(value), 'год', 'года', 'лет')}"
+
+
+def phone(value: str) -> str:
+    """«+79120000000» → «+7 912 000-00-00»; другие страны — как есть."""
+    if value and len(value) == 12 and value.startswith("+7"):
+        d = value[2:]
+        return f"+7{NBSP}{d[:3]}{NBSP}{d[3:6]}-{d[6:8]}-{d[8:]}"
+    return value
+
+
+def cut(text: str | None, limit: int) -> str:
+    """Обрезка по слову с многоточием: не «техническому перев», а «техническому…»."""
+    text = " ".join((text or "").split())
+    if len(text) <= limit:
+        return text
+    head = text[: limit + 1].rsplit(" ", 1)[0] if " " in text[:limit] else text[:limit]
+    return head.rstrip(" ,.;:—-") + "…"
+
+
 def duration(low: float, high: float, after_verb: bool = False) -> str:
     """«3–4 часа», «10–20 минут», «меньше минуты»; after_verb — после «займёт»:
     «займёт 1 минуту», а не «1 минута»."""
@@ -57,7 +98,14 @@ def rub_range(low: float, high: float) -> str:
     return f"{money(low)}–{money(high)}{NBSP}₽"
 
 
+def failed_all(job: Job) -> bool:
+    """Задача дошла до конца, но ничего не получилось: каждый элемент — в списке проблем."""
+    return job.status == "done" and bool(job.error) and len(problems(job)) >= job.total
+
+
 def job_status(job: Job) -> str:
+    if failed_all(job):
+        return "Не получилось"
     if job.status == "done":
         return "Готово, есть проблемы" if job.error else "Готово"
     return {
@@ -82,11 +130,48 @@ def problem_summary(job: Job) -> str:
     return f"{num(len(items))} не получилось: {parts}"
 
 
+def reasons(job: Job) -> str:
+    """Причины сбоев словами, частые первыми: «ответ модели не получен, пустой файл»."""
+    found = Counter(reason for _, reason in problems(job) if reason)
+    return ", ".join(reason for reason, _ in found.most_common())
+
+
+def settings_hint(text: str | None) -> Markup:
+    """Текст ошибки; если дело в ключе — со ссылкой «Открыть настройки»."""
+    from app.llm import AUTH_MESSAGE
+
+    out = escape(text or "")
+    if AUTH_MESSAGE in (text or ""):
+        out += Markup(' <a href="/settings">Открыть настройки</a>')
+    return out
+
+
+def import_done(job: Job) -> str:
+    """Итог загрузки: «30 строк и 5 файлов» — что именно прочитали."""
+    rows, files = job.payload.get("rows"), job.payload.get("files")
+    if rows is None:
+        return f"{num(job.progress)} из {num(job.total)}"
+    ok_files = files - len(problems(job))
+    parts = []
+    if rows:
+        parts.append(count(rows, "строка", "строки", "строк"))
+    if files:
+        parts.append(count(ok_files, "файл", "файла", "файлов"))
+    return " и ".join(parts) or "файл пустой"
+
+
+def network_errors(job: Job) -> bool:
+    """Есть ли среди причин сетевые сбои: только тогда пишем, что агент их повторил."""
+    from app.llm import BUSY_MESSAGE
+
+    return any(reason == BUSY_MESSAGE for _, reason in problems(job))
+
+
 def remaining(job: Job) -> str:
     """Остаток по скорости за последние 10–15 минут; первые две минуты — «считаем»."""
     ticks = [t for t in job.payload.get("ticks", []) if time.time() - t[0] <= 15 * 60]
     if len(ticks) < 2 or ticks[-1][0] - ticks[0][0] < 120 or ticks[-1][1] <= ticks[0][1]:
-        return "Считаем, сколько займёт…"
+        return "Агент считает, сколько займёт…"
     rate = (ticks[-1][1] - ticks[0][1]) / (ticks[-1][0] - ticks[0][0])
     left = (job.total - job.progress) / rate
     return f"Осталось {duration(left * 0.85, left * 1.2)}"
@@ -127,6 +212,26 @@ def stale_note(c: Candidate) -> str:
     return "Дата резюме не указана — уточните на созвоне, актуально ли оно"
 
 
+RELOCATION_RE = re.compile(r"(?i)(?:пере|от)езд\w*|релокац\w*|командировк\w*")
+
+
+def field_spans(text: str, parsed: dict) -> list[tuple[int, int, str]]:
+    """Опора для навыков, города, переезда и языков: первое место в резюме, где стоит
+    значение поля (для навыков и языков — первое из найденных)."""
+    lower = text.lower()
+    found = []
+    for field in ("city", "skills", "languages"):
+        values = parsed.get(field) or []
+        for value in [values] if isinstance(values, str) else values:
+            at = lower.find(str(value).lower()) if value else -1
+            if at >= 0:
+                found.append((at, at + len(value), f"q-{field}"))
+                break
+    if (parsed.get("relocation") or "unknown") != "unknown" and (m := RELOCATION_RE.search(text)):
+        found.append((m.start(), m.end(), "q-relocation"))
+    return found
+
+
 def marked_source(c: Candidate, extra: list[tuple[str, list[int]]] = ()) -> tuple[Markup, set[str]]:
     """Исходник с метками <mark id> на строках и цитатах, на которых основаны поля слева;
     `extra` — ещё строки для подсветки (довод оценки по ссылке «Показать в резюме»)."""
@@ -139,6 +244,7 @@ def marked_source(c: Candidate, extra: list[tuple[str, list[int]]] = ()) -> tupl
     quote = parsed.get("summary_quote")
     if quote and (span := quote_span(quote, c.raw_text)):
         spans.append((*span, "q-s"))
+    spans += field_spans(c.raw_text, parsed)
     spans.sort()
     out, pos, anchors = [], 0, set()
     for start, stop, anchor in spans:

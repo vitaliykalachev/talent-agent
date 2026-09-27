@@ -100,10 +100,12 @@ def view(s, now: datetime | None = None) -> dict:
     """Что показать на «Утре»: предупреждение первой строкой, разделы, пустое утро."""
     now = now or datetime.now()
     run = s.scalar(select(NightRun).order_by(NightRun.id.desc()).limit(1))
-    alert, run_now = None, False
+    alert, run_now, calm = None, False, False
     expected = schedule.previous_run(now)
-    if run is None:
-        alert, run_now = "Ночного прогона ещё не было.", True
+    if run is None:  # не сбой, а начало работы: спокойный текст, без красной плашки
+        calm = True
+        alert = "Ночного прогона ещё не было. После первого прогона здесь появится отчёт за ночь."
+        run_now = bool(s.scalar(select(func.count(Candidate.id))))  # на пустой базе нечего
     elif run.status in ("failed", "missed"):
         alert, run_now = run.error, True
     elif run.status in ("queued", "running") and run.id not in night.working_runs(s):
@@ -127,6 +129,7 @@ def view(s, now: datetime | None = None) -> dict:
         "run": done,
         "alert": alert,
         "run_now": run_now,
+        "calm": calm,
         "sections": sections(done.summary) if done else [],
         "empty": empty_line(done.summary) if done else None,
         "next": next_line(s, now),

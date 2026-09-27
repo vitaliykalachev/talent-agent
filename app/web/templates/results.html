@@ -1,20 +1,9 @@
 {% extends "base.html" %}
 {% block title %}Результат: {{ v.title }} · Кадровый агент{% endblock %}
 
-{% macro wrong(card, target, text) %}
-<details class="wrong"><summary>Неверно</summary>
-  <form method="post" action="/vacancies/{{ v.id }}/feedback">
-    <input type="hidden" name="candidate_id" value="{{ card.c.id }}">
-    <input type="hidden" name="target" value="{{ target }}">
-    <input type="hidden" name="text" value="{{ text }}">
-    {% for k, label in FEEDBACK_KINDS.items() %}
-    <label><input type="radio" name="kind" value="{{ k }}" required> {{ label }}</label>
-    {% endfor %}
-    <input type="text" name="note" placeholder="Что не так (для «Другое…»)">
-    <select name="scope"><option value="vacancy">Только для этой вакансии</option><option value="all">Для всех вакансий</option></select>
-    <button class="button" type="submit">Отправить</button>
-  </form>
-</details>
+{% macro wrong(card, target, index) %}
+{% set href = "/vacancies/%d/wrong?c=%d&t=%s&i=%d"|format(v.id, card.c.id, target, index) %}
+<a class="wrong" href="{{ href }}" hx-get="{{ href }}" hx-swap="outerHTML">Неверно</a>
 {% endmacro %}
 
 {% macro card_html(card) %}
@@ -28,15 +17,14 @@
       {% if m.decision == "invite" %}<span class="pill go">Позвать</span>{% elif m.decision == "maybe" %}<span class="pill mid">Под вопросом</span>{% elif m.decision == "reject" %}<span class="pill stop">Не подходит{% if m.decision_reason %}: {{ m.decision_reason|lower }}{% endif %}</span>{% endif %}
     </div>
     <div class="meta">
-      <span class="cat {{ card.category }}">{{ CATEGORIES[card.category] }}</span>
-      {% if m.score is not none %}<span class="score" title="Оценка 0–100 по требованиям вакансии">{{ m.score }}</span>{% endif %}
+      {% if m.score is not none %}<span class="score" title="Оценка 0–100 по требованиям вакансии">оценка {{ m.score }}</span>{% endif %}
       {% if card.tie %}<span class="pill" title="Разница с соседом меньше 5 баллов: сравнивайте по доводам, а не по числу">примерно равны</span>{% endif %}
     </div>
   </header>
   <p class="sub">{% set title, company = c|current_job %}{{ title }}{% if company %} · {{ company }}{% endif %}{% if c.city %} · {{ c.city }}{% endif %} · резюме от {{ c.resume_date|short_date }}</p>
   {% if card.stale %}<p class="callout warn small">{{ card.stale }}</p>{% endif %}
   {% if m.status == "failed" %}
-  <p>Оценить не удалось: {{ m.error or "причина неизвестна" }}.</p>
+  <p>Оценить не удалось: {{ (m.error or "причина неизвестна")|settings_hint }}</p>
   {% else %}
   <p class="counter">{{ card.counter }}</p>
   {% if m.reasons %}
@@ -45,7 +33,7 @@
     {% for r in m.reasons %}
     <li><strong>{{ r.name }}</strong>{% if r.verdict == "partial" %} <small>(частично)</small>{% endif %}
       {% if r.quote %}<q>{{ r.quote }}</q> <a href="/candidates/{{ c.id }}?v={{ v.id }}#e-{{ r.requirement_id }}">Показать в резюме</a>{% endif %}
-      {{ wrong(card, "reason", r.name) }}</li>
+      {{ wrong(card, "reason", loop.index0) }}</li>
     {% endfor %}
   </ul>
   {% endif %}
@@ -54,7 +42,7 @@
   <ul class="concerns">
     {% for x in m.concerns %}
     <li>{{ x.text }} {% if x.quote %}<q>{{ x.quote }}</q>{% else %}<span class="none">в резюме не сказано</span>{% endif %}
-      {{ wrong(card, "concern", x.text) }}</li>
+      {{ wrong(card, "concern", loop.index0) }}</li>
     {% endfor %}
   </ul>
   {% endif %}
@@ -98,28 +86,22 @@
 {% endmacro %}
 
 {% block content %}
-<p><a href="/vacancies/{{ v.id }}">← Вакансия и требования</a></p>
+<p class="back"><a href="/vacancies/{{ v.id }}">← Вакансия и требования</a></p>
 <div class="headline">
   <h1>{{ v.title }}</h1>
 </div>
 {% if job %}<div class="card">{% include "eval_job.html" %}</div>{% endif %}
 
-{% if total and not v.notice_seen %}
-<div class="callout warn notice">
-  <p>Оценки подготовил ИИ-агент по тексту резюме. Он может ошибиться: прежде чем звать кандидата, откройте «Показать в резюме» и проверьте доводы. Решение принимаете вы; агент никого не скрывает сам.</p>
-  <form method="post" action="/vacancies/{{ v.id }}/notice" class="inline"><button class="button ghost" type="submit">Понятно</button></form>
-</div>
-{% endif %}
-
 {% if not total %}
 <div class="callout"><p>Пока никого не оценили. <a href="/vacancies/{{ v.id }}#run">Запустить оценку</a></p></div>
 {% else %}
+<p class="notice-line">Оценки подготовил агент по тексту резюме и может ошибиться: перед звонком проверьте доводы через «Показать в резюме».</p>
 <details class="card export">
-  <summary class="button">Скачать Excel</summary>
+  <summary class="button ghost">Выбрать, что скачать</summary>
   <form method="get" action="/vacancies/{{ v.id }}/export">
     <fieldset><legend>Кого</legend>
-      <label><input type="radio" name="who" value="invite" checked> Отмеченных «Позвать»</label>
-      <label><input type="radio" name="who" value="fit"> Всех из «Подходят»</label>
+      <label{% if not invited %} class="off"{% endif %}><input type="radio" name="who" value="invite"{% if invited %} checked{% else %} disabled{% endif %}> Отмеченных «Позвать» ({{ invited }})</label>
+      <label><input type="radio" name="who" value="fit"{% if not invited %} checked{% endif %}> Всех из «Подходят» ({{ groups.fit|length }})</label>
     </fieldset>
     <fieldset><legend>Для кого</legend>
       <label><input type="radio" name="audience" value="self"> Для себя, с контактами</label>
@@ -157,9 +139,9 @@
 
 {% if toast %}
 <div class="toast" role="status">
-  <span>Учтём в вакансии «{{ v.title }}»: при следующей оценке пересчитаем {{ recount }} {{ plural(recount, "кандидата", "кандидатов", "кандидатов") }}.</span>
+  <span>Агент учтёт это в вакансии «{{ v.title }}»: при следующей оценке пересчитает {{ recount|count("кандидата", "кандидатов", "кандидатов") }}.</span>
   <form method="post" action="/feedback/{{ toast.id }}/delete" class="inline">
-    <input type="hidden" name="back" value="/vacancies/{{ v.id }}/results">
+    <input type="hidden" name="back" value="/vacancies/{{ v.id }}/results{% if toast.candidate_id %}#c{{ toast.candidate_id }}{% endif %}">
     <button class="button ghost" type="submit">Отменить</button>
   </form>
 </div>

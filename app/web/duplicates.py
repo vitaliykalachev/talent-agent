@@ -64,11 +64,20 @@ def open_count(s) -> int:
     return len(open_pairs(s))
 
 
+def just_merged(s, dup_id: int | None) -> dict | None:
+    """Строка «Объединили: Давыдов А. М. · Отменить» после «Объединить»."""
+    dup = s.get(Duplicate, dup_id) if dup_id else None
+    if not dup or dup.status != "merged":
+        return None
+    return {"id": dup.id, "name": present.short_name(s.get(Candidate, dup.candidate_a).full_name)}
+
+
 @router.get("/duplicates", response_class=HTMLResponse)
-def queue(request: Request):
+def queue(request: Request, merged: int | None = None):
     with db.SessionLocal() as s:
         rows = [(d, a, b, compare(a, b)[1]) for d, a, b in open_pairs(s)]
-    return render(request, "duplicates.html", rows=rows)
+        done = just_merged(s, merged)
+    return render(request, "duplicates.html", rows=rows, done=done)
 
 
 @router.get("/duplicates/merged", response_class=HTMLResponse)
@@ -86,8 +95,9 @@ def merged_list(request: Request):
 
 
 @router.get("/duplicates/{dup_id}", response_class=HTMLResponse)
-def pair(request: Request, dup_id: int):
+def pair(request: Request, dup_id: int, merged: int | None = None):
     with db.SessionLocal() as s:
+        done = just_merged(s, merged)
         dup = s.get(Duplicate, dup_id)
         if not dup:
             raise HTTPException(404)
@@ -119,13 +129,14 @@ def pair(request: Request, dup_id: int):
         fresher=fresher,
         choices=choices,
         waiting=waiting,
+        done=done,
     )
 
 
-def _next(s) -> RedirectResponse:
+def _next(s, merged: int | None = None) -> RedirectResponse:
     rows = open_pairs(s)
     target = f"/duplicates/{rows[0][0].id}" if rows else "/duplicates"
-    return RedirectResponse(target, status_code=303)
+    return RedirectResponse(target + (f"?merged={merged}" if merged else ""), status_code=303)
 
 
 @router.post("/duplicates/{dup_id}/merge")
@@ -140,7 +151,7 @@ async def merge(request: Request, dup_id: int):
         take = {field for field, _ in CHOOSABLE if form.get(field) == str(old.id)}
         merge_pair(s, dup, take)
         s.commit()
-        return _next(s)
+        return _next(s, dup.id)
 
 
 @router.post("/duplicates/{dup_id}/reject")
@@ -167,12 +178,17 @@ def postpone(dup_id: int):
 
 
 @router.post("/duplicates/{dup_id}/unmerge")
-def undo(dup_id: int):
-    """«Отменить объединение» на основной карточке: обе записи снова отдельно."""
+async def undo(request: Request, dup_id: int):
+    """«Отменить объединение» на основной карточке или в строке «Объединили: …»: обе
+    записи снова отдельно; из очереди дублей — назад к этой паре."""
+    form = await request.form()
     with db.SessionLocal() as s:
         dup = s.get(Duplicate, dup_id)
         if not dup or dup.status != "merged":
             raise HTTPException(404)
         unmerge(s, dup)
         s.commit()
-        return RedirectResponse(f"/candidates/{dup.candidate_a}", status_code=303)
+        target = f"/candidates/{dup.candidate_a}"
+        if form.get("back") == "pair":
+            target = f"/duplicates/{dup.id}"
+        return RedirectResponse(target, status_code=303)

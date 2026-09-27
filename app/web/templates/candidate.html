@@ -1,18 +1,22 @@
 {% extends "base.html" %}
 {% block title %}{{ c.full_name or "Кандидат" }} · Кадровый агент{% endblock %}
 
+{% macro grounded(anchor, text) %}{% if anchor in anchors %}<a href="#{{ anchor }}">{{ text }}</a>{% else %}{{ text }}{% endif %}{% endmacro %}
 {% macro missing() %}<span class="none">в резюме не сказано</span>{% endmacro %}
 {% macro edited(field) %}{% if p.edits and p.edits[field] %} <small class="edited">исправлено вами {{ p.edits[field].at|iso_short }}</small>{% endif %}{% endmacro %}
 {% macro fix(field, value) %}
-<details class="fix"><summary>Исправить</summary>
+{% set failed = fix_error and fix_error[0] == field %}
+{% if failed %}{% set value = fix_error[1] %}{% endif %}
+<details class="fix"{% if failed %} open{% endif %}><summary>Исправить</summary>
   <form method="post" action="/candidates/{{ c.id }}/fix">
+    {% if failed %}<p class="field-error" role="alert">{{ fix_error[2] }}</p>{% endif %}
     <input type="hidden" name="field" value="{{ field }}">
     {% if field == "relocation" %}
     <select name="value">{% for k, label in RELOCATION.items() %}<option value="{{ k }}"{% if k == value %} selected{% endif %}>{{ label }}</option>{% endfor %}</select>
     {% elif field == "summary" %}
     <textarea name="value" rows="3">{{ value or "" }}</textarea>
     {% else %}
-    <input type="text" name="value" value="{{ value|join(', ') if value is iterable and value is not string else (value if value is not none else '') }}">
+    <input type="text" name="value" value="{{ value|join(', ') if value is iterable and value is not string else (value if value is not none else '') }}"{% if failed %} aria-invalid="true" autofocus{% endif %}>
     {% endif %}
     <button class="button" type="submit">Сохранить</button>
   </form>
@@ -20,12 +24,13 @@
 {% endmacro %}
 
 {% block content %}
-<p><a href="/candidates">← Все кандидаты</a></p>
+<p class="back"><a href="/candidates">← Все кандидаты</a></p>
 {% set title, company = c|current_job %}
 <h1>{{ c.full_name or "Без имени" }}</h1>
 <p class="sub">
   {{ title or "Должность не указана" }}{% if company %} · {{ company }}{% endif %}{% if c.city %} · {{ c.city }}{% endif %}
   {% if c.stale %} <span class="pill mid">{{ c|stale_label }}</span>{% endif %}
+  {% if future %} <span class="pill mid">дата в будущем, проверьте</span>{% endif %}
   {% if main %} <span class="pill stop">дубль</span>{% endif %}
 </p>
 
@@ -43,7 +48,7 @@
 <div class="status-line">
   <span class="pill {{ 'go' if c.parse_status == 'parsed' else 'stop' if c.parse_status == 'failed' else 'mid' }}">{{ PARSE_STATUS[c.parse_status] }}</span>
   {% if c.parse_status == "failed" and c.parse_error %}<small>{{ c.parse_error }}</small>{% endif %}
-  <form method="post" action="/candidates/{{ c.id }}/reparse" class="inline"><button class="button ghost" type="submit">Разобрать заново</button></form>
+  <form method="post" action="/candidates/{{ c.id }}/reparse" class="inline"><button class="button ghost" type="submit">{{ "Разобрать" if c.parse_status == "new" else "Разобрать заново" }}</button></form>
 </div>
 
 {% if shown %}
@@ -77,22 +82,22 @@
         </dd>
 
         <dt id="f-total_years">Стаж</dt>
-        <dd>{% if p.total_years is number %}{{ ("%g"|format(p.total_years))|replace(".", ",") }} лет{% if p.total_years_check %} <span class="pill mid">проверьте: в резюме {{ "%g"|format(p.total_years_stated) }}</span>{% endif %}{% else %}{{ missing() }}{% endif %}{{ edited("total_years") }}{{ fix("total_years", p.total_years) }}</dd>
+        <dd>{% if p.total_years is number %}{{ p.total_years|years }}{% if p.total_years_check %} <span class="pill mid">проверьте: в резюме {{ p.total_years_stated|years }}</span>{% endif %}{% else %}{{ missing() }}{% endif %}{{ edited("total_years") }}{{ fix("total_years", p.total_years) }}</dd>
 
         <dt id="f-skills">Навыки</dt>
-        <dd>{{ p.skills|join(", ") or missing() }}{{ edited("skills") }}{{ fix("skills", p.skills) }}</dd>
+        <dd>{% if p.skills %}{{ grounded("q-skills", p.skills|join(", ")) }}{% else %}{{ missing() }}{% endif %}{{ edited("skills") }}{{ fix("skills", p.skills) }}</dd>
 
         <dt id="f-salary_amount">Зарплата</dt>
         <dd>{% if p.salary_amount %}{{ p.salary_amount|num }} {{ p.salary_currency or "" }}{% if p.salary_kind == "net" %} на руки{% elif p.salary_kind == "gross" %} до вычета налога{% endif %}{% else %}{{ missing() }}{% endif %}{{ edited("salary_amount") }}{{ fix("salary_amount", p.salary_amount) }}</dd>
 
         <dt id="f-city">Город</dt>
-        <dd>{{ p.city or missing() }}{{ edited("city") }}{{ fix("city", p.city) }}</dd>
+        <dd>{% if p.city %}{{ grounded("q-city", p.city) }}{% else %}{{ missing() }}{% endif %}{{ edited("city") }}{{ fix("city", p.city) }}</dd>
 
         <dt id="f-relocation">Переезд</dt>
-        <dd>{{ RELOCATION.get(p.relocation, RELOCATION["unknown"]) }}{{ edited("relocation") }}{{ fix("relocation", p.relocation) }}</dd>
+        <dd>{{ grounded("q-relocation", RELOCATION.get(p.relocation, RELOCATION["unknown"])) }}{{ edited("relocation") }}{{ fix("relocation", p.relocation) }}</dd>
 
         <dt id="f-languages">Языки</dt>
-        <dd>{{ p.languages|join(", ") or missing() }}{{ edited("languages") }}{{ fix("languages", p.languages) }}</dd>
+        <dd>{% if p.languages %}{{ grounded("q-languages", p.languages|join(", ")) }}{% else %}{{ missing() }}{% endif %}{{ edited("languages") }}{{ fix("languages", p.languages) }}</dd>
 
         <dt>Образование</dt>
         <dd>{% for e in p.education %}{{ e.institution or "" }}{% if e.degree %}, {{ e.degree }}{% endif %}{% if e.year %}, {{ e.year }}{% endif %}{% if not loop.last %}<br>{% endif %}{% else %}{{ missing() }}{% endfor %}</dd>
@@ -104,11 +109,11 @@
 
       <h4>Контакты</h4>
       <dl class="facts">
-        <dt>Телефоны</dt><dd>{{ c.phones|join(", ") or "—" }}</dd>
+        <dt>Телефоны</dt><dd>{{ c.phones|map("phone")|join(", ") or "—" }}</dd>
         <dt>Почта</dt><dd>{{ c.emails|join(", ") or "—" }}</dd>
-        {% if c.body_contacts %}<dt>Ещё в тексте</dt><dd>{{ c.body_contacts|join(", ") }} <small>(могут быть чужими)</small></dd>{% endif %}
+        {% if c.body_contacts %}<dt>Ещё в тексте</dt><dd>{{ c.body_contacts|map("phone")|join(", ") }} <small>(могут быть чужими)</small></dd>{% endif %}
         <dt>Год рождения</dt><dd>{{ c.birth_year or "—" }}</dd>
-        <dt>Дата резюме</dt><dd>{{ c.resume_date|short_date }}</dd>
+        <dt>Дата резюме</dt><dd>{{ c.resume_date|short_date }}{% if future %} <span class="pill mid">дата в будущем, проверьте</span>{% endif %}</dd>
         <dt>ID в CRM</dt><dd>{{ c.external_id or "—" }}</dd>
         <dt>Файл резюме</dt><dd>{{ c.source_file or "—" }}</dd>
       </dl>

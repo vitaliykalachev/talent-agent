@@ -1,9 +1,11 @@
 """Экраны раздела 2 плана: главная, загрузка, кандидаты, карточка, настройки."""
 
+import asyncio
 import math
 import re
 import tempfile
 import time
+import zipfile
 from datetime import date
 from pathlib import Path
 
@@ -17,9 +19,10 @@ from starlette.datastructures import UploadFile
 from app import config, db, evaluate, mail, morning, parse, schedule
 from app.anonymize import anonymize
 from app.importer.dedup import auto_merged, open_pairs
-from app.importer.mapping import FIELDS
+from app.importer.mapping import FIELDS, confidence
 from app.importer.normalize import looks_like_name
-from app.importer.pipeline import documents, load_table, new_batch, start_import
+from app.importer.pipeline import documents, load_table, new_batch, preview, start_import
+from app.importer.readers import read_table
 from app.jobs import enqueue
 from app.llm import AuthError, get_llm
 from app.models import Candidate, Duplicate, Feedback, ImportBatch, Job, Match, NightRun, Vacancy
@@ -35,6 +38,14 @@ templates.env.filters["num"] = present.num
 templates.env.filters["job_status"] = present.job_status
 templates.env.filters["stale_label"] = present.stale_label
 templates.env.filters["batch_label"] = present.batch_label
+templates.env.filters["count"] = present.count
+templates.env.filters["years"] = present.years
+templates.env.filters["phone"] = present.phone
+templates.env.filters["cut"] = present.cut
+templates.env.filters["import_done"] = present.import_done
+templates.env.filters["settings_hint"] = present.settings_hint
+templates.env.globals["reasons"] = present.reasons
+templates.env.globals["network_errors"] = present.network_errors
 templates.env.globals["PARSE_STATUS"] = present.PARSE_STATUS
 templates.env.globals["problem_summary"] = present.problem_summary
 templates.env.globals["remaining"] = present.remaining
@@ -50,7 +61,7 @@ def headline(raw_text: str) -> str:
     lines = [ln.strip(" #*_\t") for ln in (raw_text or "").splitlines() if ln.strip(" #*_\t")]
     for line in lines:
         if match := POSITION_RE.match(line):
-            return match.group(1)[:100]
+            return present.cut(match.group(1), 100)
     for line in lines[:6]:
         if ":" not in line and not looks_like_name(line) and len(line) < 100:
             return line
@@ -111,12 +122,21 @@ def pipeline(s) -> dict:
 
 
 def parse_offer(s) -> dict:
+    """Предложение разобрать резюме; после пробного разбора — ссылка на его список."""
     count = lambda *w: s.scalar(select(func.count(Candidate.id)).where(active(), *w))  # noqa: E731
+    last = latest(s, "parse")
+    trial = last if last and last.status == "done" and last.payload.get("trial") else None
     return {
         "waiting": count(Candidate.parse_status == "new"),
         "parsed": count(Candidate.parse_status == "parsed"),
         "failed": count(Candidate.parse_status == "failed"),
         "trial": TRIAL,
+        "trial_job": trial.id if trial else None,
+        "trial_parsed": count(
+            Candidate.parse_status == "parsed", Candidate.id.in_(trial.payload["ids"])
+        )
+        if trial
+        else 0,
     }
 
 
@@ -162,6 +182,7 @@ def home(request: Request):
         running=importing,
         with_errors=with_errors,
         flow=flow,
+        has_key=bool(config.get("llm_api_key")) or config.get("llm_provider") == "mock",
     )
 
 
@@ -197,6 +218,36 @@ def upload_form(request: Request):
     return render(request, "upload.html", batches=batches, error=None, offer=offer)
 
 
+def _upload_error(request: Request, error: str) -> HTMLResponse:
+    with db.SessionLocal() as s:
+        batches = history(s)
+    return render(request, "upload.html", status_code=400, batches=batches, offer=None, error=error)
+
+
+def broken_file(table: Path | None, docs: list[Path]) -> str | None:
+    """Текст ошибки, если выгрузка или архив не открываются; None — всё читается.
+    Проверка идёт до создания загрузки, чтобы битый файл не оставлял пустую загрузку."""
+    if table:
+        try:
+            headers, rows = read_table(table)
+        except Exception:  # BadZipFile, InvalidFileException, битые XML внутри XLSX
+            return (
+                f"Файл «{table.name}» не открылся: он повреждён или это не Excel. "
+                "Сохраните выгрузку заново и загрузите ещё раз."
+            )
+        if not rows and not docs:
+            return (
+                f"В файле «{table.name}» нет строк с данными. Проверьте, что выгрузили нужный лист."
+            )
+    for path in docs:
+        if path.suffix.lower() == ".zip" and not zipfile.is_zipfile(path):
+            return (
+                f"Архив «{path.name}» не открылся: он повреждён или это не ZIP. "
+                "Упакуйте резюме заново и загрузите ещё раз."
+            )
+    return None
+
+
 @router.post("/upload")
 async def upload(request: Request):
     form = await request.form()
@@ -205,16 +256,7 @@ async def upload(request: Request):
     files = [f for f in files if isinstance(f, UploadFile) and f.filename]
     has_table = isinstance(table, UploadFile) and bool(table.filename)
     if not has_table and not files:
-        with db.SessionLocal() as s:
-            batches = history(s)
-        return render(
-            request,
-            "upload.html",
-            status_code=400,
-            batches=batches,
-            offer=None,
-            error="Выберите выгрузку из CRM или файлы резюме.",
-        )
+        return _upload_error(request, "Выберите выгрузку из CRM или файлы резюме.")
     incoming = db.data_dir / "incoming"
     incoming.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=incoming) as tmp:
@@ -231,7 +273,10 @@ async def upload(request: Request):
             if target.exists():
                 target = docs_dir / f"{Path(name).stem}_{i}{Path(name).suffix}"
             target.write_bytes(await f.read())
-        docs = [p for p in docs_dir.iterdir() if p.suffix.lower() == ".zip"] + [docs_dir]
+        loose = sorted(docs_dir.iterdir())
+        if error := broken_file(table_path, loose):
+            return _upload_error(request, error)
+        docs = [p for p in loose if p.suffix.lower() == ".zip"] + [docs_dir]
         with db.SessionLocal() as s:
             batch = new_batch(s, table_path, docs)
     return RedirectResponse(f"/upload/{batch.id}", status_code=303)
@@ -250,15 +295,18 @@ def batch_page(request: Request, batch_id: int):
             raise HTTPException(404)
         job = _batch_job(s, batch_id)
         offer = parse_offer(s) if job and job.status == "done" else None
-    headers, rows = load_table(batch)
+        headers, rows = load_table(batch)
+        outcome = None if job else preview(s, headers, batch.mapping, rows)
     columns = [
         {
             "index": i,
             "header": h,
-            "field": batch.mapping[i] if i < len(batch.mapping) else "",
+            "field": field,
+            "label": confidence(h, field),
             "examples": [str(r[i]) for r in rows[:3] if i < len(r) and r[i] not in (None, "")],
         }
         for i, h in enumerate(headers)
+        for field in [batch.mapping[i] if i < len(batch.mapping) else ""]
     ]
     return render(
         request,
@@ -270,7 +318,26 @@ def batch_page(request: Request, batch_id: int):
         docs_count=len(documents(batch)),
         fields=FIELDS,
         offer=offer,
+        outcome=outcome,
     )
+
+
+@router.post("/upload/{batch_id}/preview", response_class=HTMLResponse)
+async def batch_preview(request: Request, batch_id: int):
+    """«Что получится» заново, когда рекрутёр поменял значение колонки (HTMX)."""
+    form = await request.form()
+    with db.SessionLocal() as s:
+        batch = s.get(ImportBatch, batch_id)
+        if not batch:
+            raise HTTPException(404)
+        headers, rows = load_table(batch)
+        outcome = preview(s, headers, _fields(form, headers), rows)
+    return render(request, "batch_outcome.html", outcome=outcome, docs_count=len(documents(batch)))
+
+
+def _fields(form, headers: list[str]) -> list[str]:
+    fields = [str(form.get(f"col_{i}", "")) for i in range(len(headers))]
+    return [f if f in FIELDS else "" for f in fields]
 
 
 @router.post("/upload/{batch_id}/start")
@@ -282,8 +349,8 @@ async def batch_start(request: Request, batch_id: int):
             raise HTTPException(404)
         if not _batch_job(s, batch_id):
             headers, _ = load_table(batch)
-            fields = [str(form.get(f"col_{i}", "")) for i in range(len(headers))]
-            start_import(s, batch, [f if f in FIELDS else "" for f in fields])
+            skip = form.get("nameless") == "skip"
+            start_import(s, batch, _fields(form, headers), skip_nameless=skip)
     return RedirectResponse(f"/upload/{batch_id}", status_code=303)
 
 
@@ -337,8 +404,29 @@ async def parse_start(request: Request):
     with db.SessionLocal() as s:
         ids = _scope_ids(s, scope, job_id)
         if ids:
-            parse.start_parse(s, ids)
+            job = parse.start_parse(s, ids)
+            if scope == "trial" and job.payload["ids"] == ids:  # новая задача, не дописка
+                job.payload = {**job.payload, "trial": True}
+                s.commit()
     return RedirectResponse("/", status_code=303)
+
+
+@router.get("/parse/trial", response_class=HTMLResponse)
+def parse_trial(request: Request, job: int):
+    """«Посмотреть 20 разобранных»: как агент понял резюме пробного разбора."""
+    with db.SessionLocal() as s:
+        found = s.get(Job, job)
+        if not found or found.kind != "parse":
+            raise HTTPException(404)
+        rows = list(
+            s.scalars(
+                select(Candidate)
+                .where(Candidate.id.in_(found.payload.get("ids", [])))
+                .order_by(Candidate.id)
+            )
+        )
+        offer = parse_offer(s)
+    return render(request, "parse_trial.html", rows=rows, offer=offer)
 
 
 @router.get("/parse/preview", response_class=HTMLResponse)
@@ -493,6 +581,16 @@ def candidates(
 def candidate(request: Request, candidate_id: int, v: int | None = None):
     """Карточка кандидата; `v` — вакансия, чьи доводы подсветить в резюме
     («Показать в резюме»): строки каждого довода получают якорь e-<требование>."""
+    return _candidate_page(request, candidate_id, v)
+
+
+def _candidate_page(
+    request: Request,
+    candidate_id: int,
+    v: int | None = None,
+    fix_error: tuple[str, str, str] | None = None,
+) -> HTMLResponse:
+    """`fix_error` — (поле, что ввели, что не так): форма «Исправить» открыта с ошибкой."""
     with db.SessionLocal() as s:
         c = s.get(Candidate, candidate_id)
         if not c:
@@ -534,6 +632,9 @@ def candidate(request: Request, candidate_id: int, v: int | None = None):
         history=[(m, vac, evaluate.category(m)) for m, vac in history],
         shown=shown,
         CATEGORIES=evaluate.CATEGORIES,
+        fix_error=fix_error,
+        future=bool(c.resume_date and c.resume_date > date.today()),
+        status_code=400 if fix_error else 200,
     )
 
 
@@ -554,10 +655,12 @@ async def candidate_fix(request: Request, candidate_id: int):
         c = s.get(Candidate, candidate_id)
         if not c or field not in parse.EDITABLE:
             raise HTTPException(404)
+        value = str(form.get("value", ""))
         try:
-            parse.apply_edit(c, field, str(form.get("value", "")))
+            parse.apply_edit(c, field, value)
         except ValueError:
-            raise HTTPException(400, "Нужно число не меньше нуля, например 12,5") from None
+            error = (field, value, "Нужно число не меньше нуля, например 12,5.")
+            return _candidate_page(request, candidate_id, fix_error=error)
         s.commit()
     return RedirectResponse(f"/candidates/{candidate_id}#f-{field}", status_code=303)
 
@@ -619,8 +722,12 @@ def _memory() -> list:
         ).all()
 
 
-def _settings_page(request: Request, message: str | None = None, error: bool = False):
-    values = {key: config.get(key) for key in SETTING_FIELDS}
+def _settings_page(
+    request: Request, message: str | None = None, error: bool = False, typed: dict | None = None
+):
+    """`typed` — несохранённые значения из формы: после проверки подключения они остаются
+    в полях, а не заменяются сохранёнными."""
+    values = {key: (typed or {}).get(key) or config.get(key) for key in SETTING_FIELDS}
     return render(
         request,
         "settings.html",
@@ -669,21 +776,50 @@ def _save_settings(form) -> str | None:
     return None
 
 
+CHECK_TIMEOUT = 10  # секунд на «Проверить подключение»: одна попытка, без повторов
+CHECKED = ("llm_provider", "llm_base_url", "llm_api_key", "llm_model_parse")
+NO_ADDRESS = (
+    "Адрес сервиса не отвечает за 10 секунд. Проверьте поле «Адрес сервиса», "
+    "например https://api.claudehub.fun."
+)
+
+
 @router.post("/settings/check", response_class=HTMLResponse)
-def settings_check(request: Request):
+async def settings_check(request: Request):
+    """Проверяет то, что сейчас в полях формы, без сохранения: ключ из поля, а если
+    поле пустое — сохранённый."""
+    form = await request.form()
+    typed = {key: str(form.get(key, "")).strip() for key in CHECKED}
+    provider = typed["llm_provider"] or config.get("llm_provider")
+    if provider != "mock" and not (typed["llm_api_key"] or config.get("llm_api_key")):
+        message = "Ключ доступа не задан: вставьте его в поле «Ключ доступа» и проверьте ещё раз."
+        return _settings_page(request, message, error=True, typed=typed)
     started = time.monotonic()
     try:
-        get_llm("parse").complete_structured(
-            Ping, "Проверка связи. Ответь ok = true.", "Проверка связи: ответь ok = true."
+        llm = get_llm("parse", typed, timeout=CHECK_TIMEOUT)
+        llm.retries = 0
+        await asyncio.to_thread(
+            llm.complete_structured,
+            Ping,
+            "Проверка связи. Ответь ok = true.",
+            "Проверка связи: ответь ok = true.",
         )
     except AuthError as exc:
-        return _settings_page(request, f"Не получилось: {exc}", error=True)
+        return _settings_page(request, str(exc), error=True, typed=typed)
     except Exception:  # адрес не тот, сервис недоступен или отвечает не то
-        return _settings_page(
-            request, "Адрес сервиса не отвечает, проверьте его в Настройках.", error=True
-        )
+        return _settings_page(request, NO_ADDRESS, error=True, typed=typed)
     seconds = f"{time.monotonic() - started:.1f}".replace(".", ",")
-    return _settings_page(request, f"Подключение работает: ответ за {seconds} с.")
+    message = f"Подключение работает: ответ за {seconds} с."
+    if typed["llm_api_key"] or any(typed[k] != config.get(k) for k in CHECKED if typed[k]):
+        message += " Нажмите «Сохранить», чтобы агент работал с этими настройками."
+    return _settings_page(request, message, typed=typed)
+
+
+@router.post("/settings/key-delete", response_class=HTMLResponse)
+def settings_key_delete(request: Request):
+    """«Удалить ключ»: пустое поле ключ не стирает, поэтому отдельная кнопка."""
+    config.save({"llm_api_key": ""})
+    return _settings_page(request, "Ключ удалён.")
 
 
 @router.post("/settings/mail-test", response_class=HTMLResponse)

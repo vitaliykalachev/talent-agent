@@ -62,7 +62,7 @@ def test_screens_answer_200_on_empty_base(client, url):
 def test_background_import_reaches_done_and_counts_rows(client):
     job_id = upload_and_import(client)
     fragment = client.get(f"/jobs/{job_id}").text
-    assert "3 из 3" in fragment
+    assert "Готово: 3\xa0строки" in fragment  # аудит №21: что именно прочитали
     assert "every 2s" not in fragment  # опрос прекращается после завершения
     home = client.get("/").text
     assert re.search(r'data-stat="candidates">\s*2\s*<', home)
@@ -86,7 +86,7 @@ def test_candidates_search_filters_and_card(client):
     card_id = re.search(r'href="/candidates/(\d+)"', page).group(1)
     card = client.get(f"/candidates/{card_id}")
     assert card.status_code == 200
-    assert "+79031112233" in card.text
+    assert "+7\xa0903\xa0111-22-33" in card.text  # аудит №21: телефон по-человечески
 
 
 def test_duplicate_card_links_to_main_record(client):

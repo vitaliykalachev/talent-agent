@@ -6,8 +6,8 @@
 {% if run %}<p class="sub">Отчёт за ночь, {{ run.started_at|short_date }}, прогон начался в {{ run.started_at.strftime("%H:%M") }}.</p>{% endif %}
 
 {% if alert %}
-<div class="callout {{ 'stop' if run_now else 'warn' }}">
-  <p>{{ alert }}</p>
+<div class="callout {{ '' if calm else 'stop' if run_now else 'warn' }}">
+  <p>{{ alert|settings_hint }}</p>
   {% if run_now %}
   <form method="post" action="/night/run" class="inline"><button class="button" type="submit">Запустить сейчас</button></form>
   {% endif %}

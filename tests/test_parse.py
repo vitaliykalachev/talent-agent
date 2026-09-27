@@ -217,7 +217,8 @@ def test_bad_key_stops_job_with_human_message(five, session, tmp_path):
 
 def test_resume_without_recorded_answer_is_failed_not_empty(five, session, tmp_path):
     """Решение главной сессии: у мока нет ответа на резюме — «Не удалось разобрать»
-    с причиной «нет записанного ответа», а не пустой профиль со статусом «Разобрано»."""
+    с причиной «ответ модели не получен» (аудит №3: без служебных слов про запись),
+    а не пустой профиль со статусом «Разобрано»."""
     folder = tmp_path / "empty"
     folder.mkdir()
     config.save({"llm_fixtures": str(folder)})
@@ -227,7 +228,7 @@ def test_resume_without_recorded_answer_is_failed_not_empty(five, session, tmp_p
         session.refresh(c)
         assert (c.parse_status, c.parse_error, c.parsed) == (
             "failed",
-            "нет записанного ответа",
+            "ответ модели не получен",
             None,
         )
 

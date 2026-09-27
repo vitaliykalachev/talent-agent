@@ -1,3 +1,6 @@
+import re
+import time
+
 import numpy as np
 import pytest
 from sqlalchemy import select
@@ -115,3 +118,37 @@ def test_rare_term_on_second_page_is_found(demo):
     assert target.id in [c.id for c, _, _ in r.hits[:10]]
     hit = next(frag for c, _, frag in r.hits if c.id == target.id)
     assert "<mark>Hermle</mark>" in hit  # фрагмент — тот абзац, где найден термин
+
+
+def test_4_nonsense_query_finds_nobody_fast(demo):
+    """Аудит №4: бессмыслица — «Похожих нет», а не 200 «возможно»; поиск без совпадений
+    слов не кодирует абзацы моделью и укладывается в 300 мс."""
+    search(demo, "прогрев модели", Filters())
+    started = time.perf_counter()
+    r = search(demo, "фывапролд", Filters())
+    assert time.perf_counter() - started < 0.3
+    assert r.mode == "meaning" and r.total == 0 and not r.hits
+    started = time.perf_counter()
+    r = search(demo, "кондитер", Filters())
+    assert time.perf_counter() - started < 0.3
+    assert all(near != "возможно" for _, near, _ in r.hits)
+
+
+def test_5_fragment_is_short_and_without_crm_header(demo):
+    """Аудит №5: фрагмент не длиннее 160 знаков, шапки CRM и контактов в нём нет."""
+    for query in ("начальник цеха", "бухгалтер", "кондитер", "водитель погрузчика"):
+        for c, _, frag in search(demo, query, Filters()).hits:
+            text = re.sub(r"<[^>]+>", "", str(frag))
+            assert len(text) <= 162, (query, text)
+            for word in ("ID:", "ФИО:", "Телефон", "E-mail", "Дата рождения", "@"):
+                assert word not in text, (query, text)
+            assert not c.phones or c.phones[0][2:] not in re.sub(r"\D", "", text)
+
+
+def test_6_single_surname_searches_contacts(demo):
+    """Аудит №6: одно слово — фамилия из базы — точный поиск по контактам:
+    «Никитин» находит Никитиных, но не Никитину."""
+    r = search(demo, "Никитин", Filters())
+    assert r.mode == "contacts" and r.hits
+    assert all(c.full_name.startswith("Никитин ") for c, _, _ in r.hits)
+    assert search(demo, "технолог", Filters()).mode == "meaning"

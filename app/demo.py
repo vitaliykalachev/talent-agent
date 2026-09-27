@@ -24,6 +24,7 @@ from app import config, db, demo_record, demo_vacancy, night
 from app.importer.pipeline import new_batch, start_import
 from app.jobs import run_pending
 from app.parse import start_parse, waiting_ids
+from app.web.present import plural
 
 PER_PROFESSION = 60
 DUPLICATE_SHARE = 0.05
@@ -555,6 +556,11 @@ def _email(rnd: random.Random, p: dict, taken: set) -> str:
             return email
 
 
+def _years(n: int) -> str:
+    """«1 год», «3 года», «11 лет»."""
+    return f"{n} {plural(n, 'год', 'года', 'лет')}"
+
+
 def _resume_text(
     rnd: random.Random,
     person: dict,
@@ -578,9 +584,9 @@ def _resume_text(
     facts.update(years=years, duties=duties, skills=skills, positions=[], education=None)
     if style == "short":
         facts["positions"] = [
-            {"title": title, "source_lines": {"__lines__": f"{title}, опыт {years} лет"}}
+            {"title": title, "source_lines": {"__lines__": f"{title}, опыт {_years(years)}"}}
         ]
-        return f"{name}\n{title}, опыт {years} лет, {city}. {duties[0].capitalize()}."
+        return f"{name}\n{title}, опыт {_years(years)}, {city}. {duties[0].capitalize()}."
     if style == "messy":
         facts["positions"] = [
             {
@@ -590,12 +596,15 @@ def _resume_text(
             }
         ]
         return (
-            f"{name.upper()}\n{title.lower()} {company} стаж {years} лет "
+            f"{name.upper()}\n{title.lower()} {company} стаж {_years(years)} "
             f"{', '.join(duties)} навыки {' '.join(skills)} г {city}"
         )
     prev_company = rnd.choice([c for c in spec["companies"] if c != company])
     start = updated.year - rnd.randint(1, min(years, 8))
     prev_start, prev_title = start - rnd.randint(2, 6), rnd.choice(spec["titles"])
+    # Общий стаж в тексте — по датам мест работы, иначе агент честно пишет «проверьте»
+    years = updated.year - prev_start
+    facts["years"] = years
     university = rnd.choice(UNIVERSITIES)
     facts["positions"] = [
         {
@@ -629,7 +638,7 @@ def _resume_text(
         "",
         f"Навыки: {', '.join(skills)}",
         f"Образование: {university}, {birth.year + 22}",
-        f"Общий стаж: {years} лет",
+        f"Общий стаж: {_years(years)}",
     ]
     if style == "long":
         lines += [
@@ -695,7 +704,7 @@ def recorded_answer(p: dict, facts: dict) -> dict:
         "languages": [],
         "education": [facts["education"]] if facts["education"] else [],
         "summary": (
-            f"{p['title']} с опытом {facts['years']} лет. "
+            f"{p['title']} с опытом {_years(facts['years'])}. "
             f"{duties[0][0].upper()}{duties[0][1:]}"
             f"{'; ' + duties[1] if len(duties) > 1 else ''}. "
             f"Сильные стороны: {', '.join(facts['skills'][:3])}."

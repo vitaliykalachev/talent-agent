@@ -41,7 +41,7 @@ def test_trial_parse_offer_confirm_and_preview(web, five, session):  # noqa: F81
 
     confirm = page(web, "/parse", params={"scope": "trial"})
     # живой замер: 5 резюме за 16–20 с — два захода по 4 запроса, 16–40 с
-    assert "Разберём 5 резюме. Займёт меньше минуты, будет стоить примерно" in confirm
+    assert "Агент разберёт 5 резюме. Займёт меньше минуты, будет стоить примерно" in confirm
     assert "₽" in confirm and "оригиналы остаются у вас" in confirm
     assert "Показать, что уходит модели" in confirm
 
@@ -101,9 +101,9 @@ def test_unreachable_service_named_plainly(web, monkeypatch):
             raise ValueError("Request URL is missing an 'http://' or 'https://' protocol.")
 
     for fake in (Down, Broken):
-        monkeypatch.setattr(routes, "get_llm", lambda purpose, f=fake: f())
-        text = web.post("/settings/check").text
-        assert "Адрес сервиса не отвечает, проверьте его в Настройках." in text
+        monkeypatch.setattr(routes, "get_llm", lambda *a, f=fake, **kw: f())
+        text = web.post("/settings/check", data={"llm_api_key": "k"}).text
+        assert "Адрес сервиса не отвечает за 10 секунд. Проверьте поле «Адрес сервиса»" in text
         assert "protocol" not in text
 
 
@@ -117,7 +117,7 @@ def test_link_to_resume_line_opens_resume_tab_on_phone(client):
 def test_pause_and_resume_buttons(web, session):
     job = start_parse(session, waiting_ids(session))
     fragment = page(web, "/progress")
-    assert "Разбираем резюме: 0 из 5" in fragment and "Приостановить" in fragment
+    assert "Агент разбирает резюме: 0 из 5" in fragment and "Приостановить" in fragment
     assert "Можно закрыть вкладку и работать дальше" in fragment
     assert (
         "Разбираем резюме — идёт" in fragment and "Считаем смысловые отпечатки — ждёт" in fragment
@@ -141,7 +141,7 @@ def test_problems_list_and_retry(web, five, session):  # noqa: F811
     problems = page(web, f"/jobs/{job.id}/problems")
     assert five["sales.txt"].full_name in problems and "в резюме нет текста" in problems
     retry = page(web, "/parse", params={"scope": "retry", "job": job.id})
-    assert "Разберём 1 резюме" in retry
+    assert "Агент разберёт 1 резюме" in retry
 
 
 def test_candidate_card_shows_understanding_next_to_source(web, five, session):  # noqa: F811
@@ -167,7 +167,7 @@ def test_candidate_card_shows_understanding_next_to_source(web, five, session): 
 def test_candidates_search_by_meaning_with_chips(web, five, session):  # noqa: F811
     parse_all(session)
     text = page(web, "/candidates", params={"q": "литейное производство"})
-    assert "Ищем по смыслу: «литейное производство»" in text
+    assert "Агент ищет по смыслу: «литейное производство»" in text
     assert re.search(r"очень близко|близко|возможно", text)
     assert "Директор по производству" in text and "АО «Литейный завод Поволжье»" in text
     assert not re.search(r"\b0[.,]\d{2,}\b", text)  # числовая близость не показывается
@@ -177,7 +177,7 @@ def test_candidates_search_by_meaning_with_chips(web, five, session):  # noqa: F
     assert "Литейный завод Поволжье" not in text
 
     text = page(web, "/candidates", params={"q": five["it.txt"].phones[0]})
-    assert "Ищем по контактам" in text and five["it.txt"].full_name in text
+    assert "Агент ищет по контактам" in text and five["it.txt"].full_name in text
 
 
 def test_settings_save_key_hidden_and_check(web, tmp_path):

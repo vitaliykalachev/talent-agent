@@ -1,12 +1,13 @@
 """Экраны «Вакансии», «Новая вакансия», карточка вакансии и «Результат по вакансии»."""
 
 import math
-from datetime import date
+import threading
+from datetime import date, datetime, timedelta
 from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 
 from app import db, export
 from app import evaluate as ev
@@ -99,9 +100,11 @@ def _live_job(s, v: Vacancy) -> Job | None:
 @router.get("/vacancies", response_class=HTMLResponse)
 def vacancies(request: Request):
     with db.SessionLocal() as s:
+        ok = func.sum(case((Match.status == "ok", 1), else_=0))
+        failed = func.sum(case((Match.status == "failed", 1), else_=0))
         rows = s.execute(
-            select(Vacancy, func.count(Match.candidate_id))
-            .outerjoin(Match, (Match.vacancy_id == Vacancy.id) & (Match.status == "ok"))
+            select(Vacancy, func.coalesce(ok, 0), func.coalesce(failed, 0))
+            .outerjoin(Match, Match.vacancy_id == Vacancy.id)
             .group_by(Vacancy.id)
             .order_by(Vacancy.id.desc())
         ).all()
@@ -113,41 +116,59 @@ def vacancy_new(request: Request):
     return render(request, "vacancy_new.html", form={}, error=None)
 
 
+_create_lock = threading.Lock()
+REPEAT_WINDOW = timedelta(minutes=1)  # то же описание за минуту — повторное нажатие
+
+
+def _go(request: Request, url: str):
+    """Переход после отправки формы: обычный редирект или HX-Redirect для HTMX."""
+    if request.headers.get("HX-Request"):
+        return Response(status_code=204, headers={"HX-Redirect": url})
+    return RedirectResponse(url, status_code=303)
+
+
+def _new_form_error(request: Request, form, error: str, status: int):
+    # HTMX не подменяет страницу при 4xx/5xx: ошибку формы ему отдаём с кодом 200
+    code = 200 if request.headers.get("HX-Request") else status
+    return render(request, "vacancy_new.html", status_code=code, form=form, error=error)
+
+
 @router.post("/vacancies/new", response_class=HTMLResponse)
 async def vacancy_create(request: Request):
     form = await request.form()
     description = str(form.get("description", "")).strip()
     if len(description) < 20:
-        return render(
-            request,
-            "vacancy_new.html",
-            status_code=400,
-            form=form,
-            error="Опишите вакансию хотя бы парой предложений: что делать, какой нужен опыт.",
-        )
+        error = "Опишите вакансию хотя бы парой предложений: что делать, какой нужен опыт."
+        return _new_form_error(request, form, error, 400)
     with db.SessionLocal() as s:
-        v = Vacancy(
-            title=str(form.get("title", "")).strip(),
-            description=description,
-            hard_filters=_filters(form),
-            top_n=_top_n(form),
-            schedule_enabled=form.get("schedule") == "1",
-        )
-        s.add(v)
-        s.commit()
+        with _create_lock:  # двойное нажатие: вторая вакансия не создаётся
+            twin = s.scalar(
+                select(Vacancy)
+                .where(
+                    Vacancy.description == description,
+                    Vacancy.created_at >= datetime.now() - REPEAT_WINDOW,
+                )
+                .limit(1)
+            )
+            if twin:
+                return _go(request, f"/vacancies/{twin.id}")
+            v = Vacancy(
+                title=str(form.get("title", "")).strip(),
+                description=description,
+                hard_filters=_filters(form),
+                top_n=_top_n(form),
+                schedule_enabled=form.get("schedule") == "1",
+            )
+            s.add(v)
+            s.commit()
         try:
             ev.parse_vacancy(s, v)
         except LLMError as exc:
             s.delete(v)
             s.commit()
-            return render(
-                request,
-                "vacancy_new.html",
-                status_code=502,
-                form=form,
-                error=f"Не получилось разобрать описание: {exc}. Попробуйте ещё раз.",
-            )
-    return RedirectResponse(f"/vacancies/{v.id}", status_code=303)
+            error = f"Не получилось разобрать описание: {exc}. Попробуйте ещё раз."
+            return _new_form_error(request, form, error, 502)
+    return _go(request, f"/vacancies/{v.id}")
 
 
 # ── Карточка вакансии: портрет, условия, запуск ─────────────────────────────
@@ -191,6 +212,7 @@ def vacancy(request: Request, vacancy_id: int):
         evaluated=evaluated,
         memory=memory,
         names=names,
+        unfair=ev.unfair_sentences(v),
         KINDS=ev.KINDS,
         MANY=ev.MANY,
         FEEDBACK_KINDS=FEEDBACK_KINDS,
@@ -261,7 +283,7 @@ def evaluate_progress(request: Request, vacancy_id: int):
 # ── Результат по вакансии ───────────────────────────────────────────────────
 
 
-def _card(v: Vacancy, m: Match, c: Candidate) -> dict:
+def _card(v: Vacancy, m: Match, c: Candidate, first_run: bool = False) -> dict:
     fresh_run = bool(v.last_run_at and m.evaluated_at >= v.last_run_at)
     changed = None
     if fresh_run and m.prev_score is not None and m.score is not None and m.prev_score != m.score:
@@ -274,7 +296,8 @@ def _card(v: Vacancy, m: Match, c: Candidate) -> dict:
         "c": c,
         "category": ev.category(m),
         "counter": ev.counter(m),
-        "new": fresh_run and m.change_reason == "new",
+        # «Новый» — появился с прошлой оценки; после самой первой новые все, пометка не нужна
+        "new": fresh_run and m.change_reason == "new" and not first_run,
         "changed": changed,
         "stale": present.stale_note(c) if c.stale else None,
         "tie": False,
@@ -289,9 +312,10 @@ def results_view(s, v: Vacancy, hidden: bool = False) -> dict:
     ).all()
     visible = [(m, c) for m, c in rows if m.decision != "reject"]
     rejected = [(m, c) for m, c in rows if m.decision == "reject"]
+    first_run = not any(v.last_run_at and m.evaluated_at < v.last_run_at for m, _ in rows)
     groups: dict[str, list] = {key: [] for key in ev.CATEGORIES}
     for m, c in visible:
-        card = _card(v, m, c)
+        card = _card(v, m, c, first_run)
         groups[card["category"]].append(card)
     for key, cards in groups.items():
         # внутри группы по баллу; устаревшие резюме — ниже в своей группе
@@ -304,6 +328,7 @@ def results_view(s, v: Vacancy, hidden: bool = False) -> dict:
         "hidden": [_card(v, m, c) for m, c in rejected] if hidden else [],
         "hidden_count": len(rejected),
         "total": len(rows),
+        "invited": sum(m.decision == "invite" for m, _ in visible),
     }
 
 
@@ -384,7 +409,29 @@ async def feedback(request: Request, vacancy_id: int):
         )
         s.add(f)
         s.commit()
-    return RedirectResponse(f"/vacancies/{vacancy_id}/results?undo={f.id}", status_code=303)
+    anchor = f"#c{f.candidate_id}" if f.candidate_id else ""
+    return RedirectResponse(f"/vacancies/{vacancy_id}/results?undo={f.id}{anchor}", status_code=303)
+
+
+@router.get("/vacancies/{vacancy_id}/wrong", response_class=HTMLResponse)
+def wrong_form(request: Request, vacancy_id: int, c: str = "", t: str = "reason", i: int = 0):
+    """Форма «Неверно» по нажатию: одна на запрос вместо скрытой формы у каждого довода.
+    c — кандидат, t — довод (reason) или настораживающее (concern), i — его номер."""
+    with db.SessionLocal() as s:
+        v = _vacancy(s, vacancy_id)
+        m = s.get(Match, (vacancy_id, _candidate_id({"candidate_id": c}) or 0))
+    items = (m.reasons if t == "reason" else m.concerns) if m else []
+    if not 0 <= i < len(items):
+        raise HTTPException(404)
+    context = {
+        "v": v,
+        "candidate_id": m.candidate_id,
+        "target": "concern" if t == "concern" else "reason",
+        "text": items[i]["name" if t == "reason" else "text"],
+        "FEEDBACK_KINDS": FEEDBACK_KINDS,
+    }
+    name = "wrong_form.html" if request.headers.get("HX-Request") else "wrong.html"
+    return render(request, name, **context)
 
 
 @router.post("/feedback/{feedback_id}/delete")
@@ -399,14 +446,6 @@ async def feedback_delete(request: Request, feedback_id: int):
     back = str(form.get("back", "/vacancies"))
     safe = back.startswith("/") and not back.startswith("//") and "\\" not in back
     return RedirectResponse(back if safe else "/vacancies", status_code=303)
-
-
-@router.post("/vacancies/{vacancy_id}/notice")
-def notice_seen(vacancy_id: int):
-    with db.SessionLocal() as s:
-        _vacancy(s, vacancy_id).notice_seen = True
-        s.commit()
-    return RedirectResponse(f"/vacancies/{vacancy_id}/results", status_code=303)
 
 
 @router.get("/vacancies/{vacancy_id}/export")

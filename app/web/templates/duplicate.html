@@ -4,7 +4,8 @@
 <dt>{{ label }}</dt><dd{% if key in same %} class="same"{% endif %}>{{ value }}</dd>
 {% endmacro %}
 {% block content %}
-<p><a href="/duplicates">← Все пары ({{ waiting }})</a></p>
+<p class="back"><a href="/duplicates">← Все пары ({{ waiting }})</a></p>
+{% include "merged_line.html" %}
 <h1>Похоже на дубль</h1>
 {% if dup.status == "rejected" %}<div class="callout"><p>Вы отметили: это разные люди. Пара больше не предлагается.</p></div>{% endif %}
 <p class="lead">Почему похожи: {{ reason }}.</p>
@@ -20,7 +21,7 @@
       {{ row("birth_year", "Год рождения", c.birth_year or "—") }}
       {{ row("resume_date", "Дата резюме", c.resume_date|short_date) }}
       {{ row("job", "Должность", (card.job[0] ~ (" · " ~ card.job[1] if card.job[1] else "")) or "—") }}
-      {{ row("phones", "Телефоны", c.phones|join(", ") or "—") }}
+      {{ row("phones", "Телефоны", c.phones|map("phone")|join(", ") or "—") }}
       {{ row("emails", "Почта", c.emails|join(", ") or "—") }}
       {{ row("", "Откуда", card.batch or c.source_file or "—") }}
     </dl>
@@ -32,7 +33,7 @@
 <form class="card" method="post" action="/duplicates/{{ dup.id }}/merge">
   {% if choices %}
   <h4>Что оставить в объединённой записи</h4>
-  <p>По умолчанию берём значения из более свежей записи. Телефоны и почта складываются.</p>
+  <p>По умолчанию агент берёт значения из более свежей записи. Телефоны и почта складываются.</p>
   {% for field, label in choices %}
   <fieldset class="choose">
     <legend>{{ label }}</legend>
