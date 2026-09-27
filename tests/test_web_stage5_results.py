@@ -226,6 +226,16 @@ def test_15_mail_error_in_plain_russian():
         assert "gaierror" not in _error(exc) and "Error" not in _error(exc)
 
 
+def test_23_same_crm_id_is_the_first_reason(web, namesakes, session):  # noqa: F811
+    a = session.get(Candidate, namesakes.candidate_a)
+    b = session.get(Candidate, namesakes.candidate_b)
+    assert "тот же ID в CRM" not in web.get(f"/duplicates/{namesakes.id}").text
+    b.external_id = a.external_id
+    session.commit()
+    text = web.get(f"/duplicates/{namesakes.id}").text
+    assert "Почему похожи: тот же ID в CRM, то же ФИО" in text
+
+
 def test_25_vacancies_list_counts_failures(web, session):
     v = Vacancy(title="Технолог", description="технолог литья")
     c = Candidate(full_name="Громов Илья", raw_text="Технолог")

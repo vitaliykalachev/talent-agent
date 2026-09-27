@@ -6,6 +6,7 @@ import re
 import tempfile
 import time
 import zipfile
+import zlib
 from datetime import date
 from pathlib import Path
 
@@ -230,7 +231,7 @@ def _zip_ok(path: Path) -> bool:
     try:
         with zipfile.ZipFile(path) as z:
             return z.testzip() is None
-    except (zipfile.BadZipFile, OSError, EOFError, NotImplementedError, RuntimeError):
+    except (zipfile.BadZipFile, OSError, EOFError, NotImplementedError, RuntimeError, zlib.error):
         return False
 
 

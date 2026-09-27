@@ -72,7 +72,9 @@ def test_make_demo_works_without_key(tmp_path, monkeypatch):
         assert "Похоже на дубль: " in queue and "Похоже на дубль: 0" not in queue
 
 
-YEARS_RE = re.compile(r"(?<![\d.,])(\d{1,2})(?:[.,]\d)?(?:\s*-\s*|\s+)(?:летн\w*|лет|года?)\b")
+YEARS_RE = re.compile(
+    r"(?<![\d.,])(\d{1,2})(?:[.,]\d)?(?:\s*-\s*|\s+)(?:летн\w*|лет|годам\w*|годом|года?)\b"
+)
 LATIN_RE = re.compile(r"[A-Za-z][A-Za-z0-9+#]*")
 # Названия продуктов и принятые сокращения, которые и по-русски пишут латиницей
 PRODUCTS = {"ERP", "CRM", "WMS", "CAD", "IT", "B2B", "FMCG", "DevOps", "Data", "Science", "TPM"}

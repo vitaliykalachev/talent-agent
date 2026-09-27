@@ -52,6 +52,22 @@ def test_1_zip_with_broken_file_inside_answers_400(client):
     assert r.status_code == 400 and "Архив «resumes.zip» не открылся" in r.text
 
 
+def test_1_zip_with_broken_deflated_file_answers_400(client):
+    """Сжатый файл с испорченными байтами: zlib.error при распаковке — тоже 400, не 500."""
+    import io
+    import zipfile
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("ivanov.txt", "Иванов Иван, технолог литейного производства. " * 50)
+    data = bytearray(buf.getvalue())
+    start = 30 + len("ivanov.txt")  # локальный заголовок, дальше сжатые данные
+    for i in range(start, start + 8):
+        data[i] = 0xFF
+    r = upload(client, "resumes.zip", bytes(data), field="resumes")
+    assert r.status_code == 400 and "Архив «resumes.zip» не открылся" in r.text
+
+
 # ── №2 и №11: колонки, метки, «Что получится» ──────────────────────────────
 
 
