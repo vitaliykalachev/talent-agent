@@ -1,0 +1,16 @@
+{# Предложение разобрать резюме: пробные 20 при первом запуске, потом вся база. #}
+{% if offer and offer.waiting %}
+<div class="card offer">
+  <h4>Ждут разбора: {{ offer.waiting|num }} {{ "резюме" }}</h4>
+  <p>Агент прочитает резюме и разложит их по полям: должности, навыки, стаж, зарплата, город. После этого заработает поиск по смыслу.</p>
+  <div class="actions">
+    {% if not offer.parsed %}
+    <a class="button" href="/parse?scope=trial">Разобрать {{ [offer.trial, offer.waiting]|min }} для проверки</a>
+    <a class="button ghost" href="/parse?scope=all">Начать разбор всей базы</a>
+    {% else %}
+    <a class="button" href="/parse?scope=all">Начать разбор всей базы</a>
+    <a class="button ghost" href="/parse?scope=trial">Разобрать {{ [offer.trial, offer.waiting]|min }} для проверки</a>
+    {% endif %}
+  </div>
+</div>
+{% endif %}

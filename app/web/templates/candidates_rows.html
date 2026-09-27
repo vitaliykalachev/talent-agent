@@ -1,29 +1,54 @@
-<p><small>Найдено: {{ total }}</small></p>
-{% if items %}
+{% if r.mode == "meaning" %}
+<p class="searching">Ищем по смыслу: «{{ q }}»{% if r.searched < r.base %} · <small>ищем среди {{ r.searched|num }} разобранных из {{ r.base|num }}</small>{% endif %}</p>
+{% elif r.mode == "contacts" %}
+<p class="searching">Ищем по контактам: «{{ q }}»</p>
+{% elif r.mode == "words" %}
+<p class="searching">Ищем по словам: «{{ q }}» · <small>поиск по смыслу заработает после разбора резюме</small></p>
+{% endif %}
+
+{% if chips %}
+<div class="chips">
+  {% for key, label in chips.items() %}
+  <a class="chip" href="/candidates?{{ without(key)|urlencode }}" title="Снять условие">{{ label }}{% if r.removed.get(key) %} <small>убирает {{ r.removed[key]|num }}</small>{% endif %} <span aria-hidden="true">×</span></a>
+  {% endfor %}
+</div>
+{% endif %}
+
+<p><small>Найдено: {{ r.total|num }}</small></p>
+{% if r.hits %}
 <div class="tablewrap">
 <table class="stack">
-  <thead><tr><th>Кандидат</th><th>Должность</th><th>Город</th><th>Дата резюме</th><th></th></tr></thead>
+  <thead><tr><th>Кандидат</th><th>Должность и компания</th><th>Город</th><th class="num">Стаж</th><th>Резюме</th>{% if r.mode == "meaning" %}<th>Близость</th>{% endif %}</tr></thead>
   <tbody>
-  {% for c in items %}
+  {% for c, near, frag in r.hits %}
+  {% set title, company = c|current_job %}
+  {% set p = c.parsed or {} %}
   <tr>
-    <td class="name" data-label="Кандидат"><a href="/candidates/{{ c.id }}">{{ c.full_name or "Без имени" }}</a></td>
-    <td data-label="Должность">{{ c.raw_text|headline or "—" }}</td>
-    <td data-label="Город">{{ c.city or "—" }}</td>
-    <td data-label="Дата резюме">{{ c.resume_date|ru_date }}</td>
-    <td data-label="Метка">{% if c.stale %}<span class="pill mid">нужно проверить</span>{% endif %}</td>
+    <td class="name" data-label="Кандидат"><a href="/candidates/{{ c.id }}">{{ c.full_name or "Без имени" }}</a>
+      {% if frag %}<div class="frag">{{ frag }}</div>{% endif %}</td>
+    <td data-label="Должность и компания">{{ title or "—" }}{% if company %}<br><small>{{ company }}</small>{% endif %}</td>
+    <td data-label="Город">{{ c.city or p.city or "—" }}</td>
+    <td class="num" data-label="Стаж">{% if p.total_years is number %}{{ ("%g"|format(p.total_years))|replace(".", ",") }} {{ "г." }}{% else %}—{% endif %}</td>
+    <td data-label="Резюме">{% if c.stale %}<span class="pill mid">{{ c|stale_label }}</span>{% else %}{{ c.resume_date|short_date }}{% endif %}</td>
+    {% if r.mode == "meaning" %}<td data-label="Близость"><span class="pill {{ 'go' if near == 'очень близко' else 'mid' if near == 'близко' else '' }}">{{ near }}</span></td>{% endif %}
   </tr>
   {% endfor %}
   </tbody>
 </table>
 </div>
 {% if pages > 1 %}
-{% set base = "/candidates?q=" ~ (q|urlencode) ~ "&city=" ~ (city|urlencode) ~ "&fresh=" ~ fresh %}
 <div class="pager">
-  {% if page > 1 %}<a href="{{ base }}&page={{ page - 1 }}">← Назад</a>{% endif %}
+  {% if page > 1 %}<a href="/candidates?{{ dict(params, page=page - 1)|urlencode }}">← Назад</a>{% endif %}
   <span>Страница {{ page }} из {{ pages }}</span>
-  {% if page < pages %}<a href="{{ base }}&page={{ page + 1 }}">Дальше →</a>{% endif %}
+  {% if page < pages %}<a href="/candidates?{{ dict(params, page=page + 1)|urlencode }}">Дальше →</a>{% endif %}
 </div>
 {% endif %}
+{% elif r.relax %}
+{% set key, n = r.relax %}
+<div class="callout">
+  <p>По этим условиям никого. Без условия «{{ chips[key] }}» — {{ n|num }} {{ "кандидатов" }}.</p>
+  <a class="button ghost" href="/candidates?{{ without(key)|urlencode }}">Убрать «{{ chips[key] }}»</a>
+</div>
 {% else %}
-<div class="callout"><p>Никого не нашли. Попробуйте другое слово или снимите фильтры.</p></div>
+<div class="callout"><p>Никого не нашли. Попробуйте описать иначе или снимите условия.</p></div>
 {% endif %}

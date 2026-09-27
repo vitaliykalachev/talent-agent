@@ -1,10 +1,13 @@
 """Демо-набор: 300 синтетических резюме, выгрузка «как из CRM» и папка с DOCX и TXT.
 
 Запуск: `make demo` (или `TA_DATA_DIR=data/demo uv run python -m app.demo`).
-Набор проходит через обычный конвейер импорта. Ответов ИИ-модели здесь нет — это этап 4.
+Набор проходит через обычный конвейер импорта, потом разбирается на записанных
+ответах модели (out/llm/answers.json), получает смысловые отпечатки и одну готовую
+вакансию с оценкой (`app/demo_vacancy.py`).
 """
 
 import csv
+import json
 import os
 import random
 import shutil
@@ -15,9 +18,10 @@ from datetime import date, timedelta
 from pathlib import Path
 from xml.sax.saxutils import escape
 
-from app import db
+from app import config, db, demo_vacancy
 from app.importer.pipeline import new_batch, start_import
 from app.jobs import run_pending
+from app.parse import start_parse, waiting_ids
 
 PER_PROFESSION = 60
 DUPLICATE_SHARE = 0.05
@@ -556,21 +560,56 @@ def _resume_text(
     birth: date,
     updated: date,
     style: str,
+    facts: dict,
+    duties: list[str] | None = None,
 ) -> str:
+    """Текст резюме; в facts — то, что из него должна понять модель (для записанных ответов)."""
     spec = PROFESSIONS[prof]
     name = f"{person['last']} {person['first']} {person['middle']}"
     years = rnd.randint(2, 22)
-    duties = rnd.sample(spec["duties"], k=min(len(spec["duties"]), rnd.randint(2, 5)))
+    sampled = rnd.sample(spec["duties"], k=min(len(spec["duties"]), rnd.randint(2, 5)))
+    duties = duties or sampled
     skills = rnd.sample(spec["skills"], k=rnd.randint(3, 6))
+    facts.update(years=years, duties=duties, skills=skills, positions=[], education=None)
     if style == "short":
+        facts["positions"] = [
+            {"title": title, "source_lines": {"__lines__": f"{title}, опыт {years} лет"}}
+        ]
         return f"{name}\n{title}, опыт {years} лет, {city}. {duties[0].capitalize()}."
     if style == "messy":
+        facts["positions"] = [
+            {
+                "title": title,
+                "company": company,
+                "source_lines": {"__lines__": f"{title.lower()} {company}"},
+            }
+        ]
         return (
             f"{name.upper()}\n{title.lower()} {company} стаж {years} лет "
             f"{', '.join(duties)} навыки {' '.join(skills)} г {city}"
         )
     prev_company = rnd.choice([c for c in spec["companies"] if c != company])
     start = updated.year - rnd.randint(1, min(years, 8))
+    prev_start, prev_title = start - rnd.randint(2, 6), rnd.choice(spec["titles"])
+    university = rnd.choice(UNIVERSITIES)
+    facts["positions"] = [
+        {
+            "title": title,
+            "company": company,
+            "start": str(start),
+            "end": "по настоящее время",
+            "source_lines": {"__lines__": f"{start} — по настоящее время: {company}, {title}"},
+        },
+        {
+            "title": prev_title,
+            "company": prev_company,
+            "start": str(prev_start),
+            "end": str(start),
+            "source_lines": {"__lines__": f"{prev_start} — {start}: {prev_company}, {prev_title}"},
+        },
+    ]
+    facts["education"] = {"institution": university, "year": birth.year + 22}
+    facts["relocation"] = "relocation_possible" if style == "long" else "unknown"
     lines = [
         name,
         f"Желаемая должность: {title}",
@@ -580,11 +619,11 @@ def _resume_text(
         "Опыт работы",
         f"{start} — по настоящее время: {company}, {title}",
         *[f"— {d}" for d in duties],
-        f"{start - rnd.randint(2, 6)} — {start}: {prev_company}, {rnd.choice(spec['titles'])}",
+        f"{prev_start} — {start}: {prev_company}, {prev_title}",
         f"— {rnd.choice(spec['duties'])}",
         "",
         f"Навыки: {', '.join(skills)}",
-        f"Образование: {rnd.choice(UNIVERSITIES)}, {birth.year + 22}",
+        f"Образование: {university}, {birth.year + 22}",
         f"Общий стаж: {years} лет",
     ]
     if style == "long":
@@ -598,8 +637,72 @@ def _resume_text(
     return "\n".join(lines)
 
 
+# Витринный кандидат для критерия приёмки из раздела 11 плана: запрос «запуск цеха
+# с нуля» находит резюме с «организовал участок литья» — слов «запуск» и «цех» в нём нет.
+SHOWCASE_TITLE = "Начальник литейного участка"
+SHOWCASE_DUTIES = [
+    "организовал участок литья алюминиевых корпусов с нуля: подобрал оборудование, набрал бригаду",
+    "вывел участок на плановую мощность за восемь месяцев",
+]
+
+
+# Кандидат с длинным резюме: редкий термин (марка станка) стоит на второй странице,
+# за пределами поисковой карточки. Его находит BM25 по полному тексту (раздел 8 плана).
+RARE_TERM = "Hermle C42U"
+SECOND_PAGE = [
+    "",
+    "Ранний опыт",
+    *[
+        f"— {year}: {what}"
+        for year, what in [
+            (2004, "технолог механического участка, подготовка управляющих программ"),
+            (2005, "освоение токарной группы, наладка станков с ЧПУ"),
+            (2006, "расчёт норм времени на операции механообработки"),
+            (2007, "подбор режущего инструмента, снижение расхода пластин"),
+            (2008, "внедрение карт наладки на участке фрезерной обработки"),
+            (2009, "обучение операторов, аттестация рабочих мест"),
+        ]
+    ],
+    "",
+    "Проекты",
+    *[
+        f"— проект {n}: перенос номенклатуры деталей на новое оборудование, партия {n * 40} шт."
+        for n in range(1, 25)
+    ],
+    "",
+    "Оборудование, с которым работал",
+    f"— пятиосевой обрабатывающий центр {RARE_TERM}, токарные станки с ЧПУ, координатно-"
+    "измерительная машина",
+]
+
+
+def recorded_answer(p: dict, facts: dict) -> dict:
+    """Ответ модели для записи в фикстуру: то, что честный разбор нашёл бы в тексте."""
+    duties = facts["duties"]
+    return {
+        "desired_position": p["title"],
+        "positions": facts["positions"],
+        "skills": facts["skills"],
+        "total_years": facts["years"],
+        "city": p["city"],
+        "relocation": facts.get("relocation", "unknown"),
+        "salary_expect": None,
+        "languages": [],
+        "education": [facts["education"]] if facts["education"] else [],
+        "summary": (
+            f"{p['title']} с опытом {facts['years']} лет. "
+            f"{duties[0][0].upper()}{duties[0][1:]}"
+            f"{'; ' + duties[1] if len(duties) > 1 else ''}. "
+            f"Сильные стороны: {', '.join(facts['skills'][:3])}."
+        ),
+        "summary_quote": duties[0],
+        "resume_date": p["updated"].isoformat(),
+    }
+
+
 def generate(out: Path, seed: int = 42, today: date | None = None) -> tuple[Path, Path]:
-    """Создаёт out/crm_export.csv и out/resumes/ (DOCX и TXT); возвращает пути."""
+    """Создаёт out/crm_export.csv, out/resumes/ (DOCX и TXT) и out/llm/answers.json —
+    записанные ответы модели для разбора без ключа; возвращает пути к таблице и резюме."""
     rnd = random.Random(seed)
     today = today or date.today()
     if out.exists():
@@ -616,7 +719,10 @@ def generate(out: Path, seed: int = 42, today: date | None = None) -> tuple[Path
     rnd.shuffle(people)
     stale_ids = {id(p) for p in rnd.sample(people, int(len(people) * STALE_SHARE))}
 
+    showcase = next(p for p in people if p["prof"] == "производство" and id(p) not in stale_ids)
+    long_one = None
     short_names = Counter((p["last"], p["first"]) for p in people)
+    answers = []
     phones: set[str] = set()
     emails: set[str] = set()
     rows = []
@@ -635,9 +741,32 @@ def generate(out: Path, seed: int = 42, today: date | None = None) -> tuple[Path
         else:
             p["updated"] = today - timedelta(days=rnd.randint(1, 500))
         style = rnd.choices(["short", "messy", "normal", "long"], weights=[2, 1, 5, 2])[0]
+        duties = None
+        if p is showcase:
+            p["title"], style, duties = SHOWCASE_TITLE, "normal", SHOWCASE_DUTIES
+        facts: dict = {}
         text = _resume_text(
-            rnd, p, p["prof"], p["title"], p["company"], p["city"], p["birth"], p["updated"], style
+            rnd,
+            p,
+            p["prof"],
+            p["title"],
+            p["company"],
+            p["city"],
+            p["birth"],
+            p["updated"],
+            style,
+            facts,
+            duties,
         )
+        if (
+            long_one is None
+            and p is not showcase
+            and p["prof"] == "производство"
+            and id(p) not in stale_ids
+            and style in ("normal", "long")
+        ):
+            long_one, text = p, text + "\n" + "\n".join(SECOND_PAGE)
+        answers.append({"match": f"ID: {p['ext_id']}\n", "response": recorded_answer(p, facts)})
         where = rnd.choices(["csv", "docx", "txt"], weights=[6, 2, 2])[0]
         if where == "txt" and short_names[(p["last"], p["first"])] > 1:
             where = "docx"  # по неоднозначному имени файл не связать — называем по ID
@@ -691,13 +820,16 @@ def generate(out: Path, seed: int = 42, today: date | None = None) -> tuple[Path
         writer = csv.DictWriter(f, fieldnames=list(rows[0]), delimiter=";")
         writer.writeheader()
         writer.writerows(rows)
+    (out / "llm").mkdir()
+    (out / "llm" / "answers.json").write_text(
+        json.dumps(answers, ensure_ascii=False, indent=1), encoding="utf-8"
+    )
     return table, resumes
 
 
-def main() -> None:
-    target = Path(os.environ.get("TA_DATA_DIR") or "data/demo")
-    if target.name != "demo" and (target / "app.db").exists():
-        sys.exit(f"Демо пересоздаёт базу; {target} не похожа на демо-папку, не трогаю.")
+def build(target: Path) -> None:
+    """Чистая демо-база в `target`: импорт, разбор на записанных ответах, отпечатки и
+    готовая вакансия с оценкой (раздел 9 плана)."""
     db.configure(target)
     if (db.data_dir / "app.db").exists():  # демо всегда начинается с чистой базы
         db.engine.dispose()
@@ -710,6 +842,21 @@ def main() -> None:
         batch = new_batch(session, table, [resumes])
         start_import(session, batch, batch.mapping)
     run_pending()
+    # Разбор на записанных ответах модели — демо работает без ключа и без сети;
+    # в «Настройках» можно переключиться на настоящий сервис и «Разобрать заново».
+    fixtures = db.data_dir / "source" / "llm"
+    config.save({"llm_provider": "mock", "llm_fixtures": str(fixtures)})
+    with db.SessionLocal() as session:
+        start_parse(session, waiting_ids(session))
+    run_pending()
+    demo_vacancy.create(fixtures)
+
+
+def main() -> None:
+    target = Path(os.environ.get("TA_DATA_DIR") or "data/demo")
+    if target.name != "demo" and (target / "app.db").exists():
+        sys.exit(f"Демо пересоздаёт базу; {target} не похожа на демо-папку, не трогаю.")
+    build(target)
     print(f"Демо готово: {db.data_dir / 'app.db'}")
 
 

@@ -5,6 +5,7 @@
 <p class="sub">Отдайте выгрузку из CRM и файлы резюме. На следующем шаге покажем, как мы поняли колонки.</p>
 
 {% if error %}<div class="callout stop"><p>{{ error }}</p></div>{% endif %}
+{% include "parse_offer.html" %}
 
 <form class="card" method="post" action="/upload" enctype="multipart/form-data">
   <div class="field">

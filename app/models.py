@@ -44,6 +44,10 @@ class Candidate(Base):
     parse_status: Mapped[str] = mapped_column(String(16), default="new")  # new|parsed|failed
     stale: Mapped[bool] = mapped_column(Boolean, default=False)
     duplicate_of: Mapped[int | None] = mapped_column(ForeignKey("candidates.id"), index=True)
+    batch_id: Mapped[int | None] = mapped_column(Integer)  # партия импорта, создавшая запись
+    # Телефоны и почта из тела резюме (не из шапки): могут быть чужими, в автосклейке не участвуют.
+    body_contacts: Mapped[list] = mapped_column(JSON, default=list)
+    parse_error: Mapped[str | None] = mapped_column(Text)
 
 
 class Embedding(Base):
@@ -65,6 +69,12 @@ class Vacancy(Base):
     top_n: Mapped[int] = mapped_column(Integer, default=40)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
     schedule_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    # «Портрет кандидата»: [{id, name, kind: must|nice|avoid, weight, source: ai|user,
+    # flag: vague|discriminatory|None, suggestion}]; каждая правка поднимает версию.
+    requirements: Mapped[list] = mapped_column(JSON, default=list)
+    requirements_version: Mapped[int] = mapped_column(Integer, default=1)
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime)  # начало последней оценки
+    notice_seen: Mapped[bool] = mapped_column(Boolean, default=False)  # «Понятно» нажато
 
 
 class Match(Base):
@@ -72,12 +82,41 @@ class Match(Base):
 
     vacancy_id: Mapped[int] = mapped_column(ForeignKey("vacancies.id"), primary_key=True)
     candidate_id: Mapped[int] = mapped_column(ForeignKey("candidates.id"), primary_key=True)
-    score: Mapped[int] = mapped_column(Integer)
-    reasons: Mapped[list] = mapped_column(JSON, default=list)
-    concerns: Mapped[list] = mapped_column(JSON, default=list)
+    status: Mapped[str] = mapped_column(String(16), default="ok")  # ok|failed
+    error: Mapped[str | None] = mapped_column(Text)
+    score: Mapped[int | None] = mapped_column(Integer)  # считает код, не модель
+    prev_score: Mapped[int | None] = mapped_column(Integer)
+    change_reason: Mapped[str | None] = mapped_column(
+        String(16)
+    )  # new|resume_updated|vacancy_changed
+    # [{requirement_id, name, kind, weight, verdict, evidence_lines, note}]
+    checks: Mapped[list] = mapped_column(JSON, default=list)
+    reasons: Mapped[list] = mapped_column(JSON, default=list)  # производное от checks
+    concerns: Mapped[list] = mapped_column(JSON, default=list)  # [{text, evidence_lines}]
     questions: Mapped[list] = mapped_column(JSON, default=list)
+    fit_summary: Mapped[str | None] = mapped_column(Text)
+    requirements_version: Mapped[int] = mapped_column(Integer, default=1)
+    resume_hash: Mapped[str | None] = mapped_column(String(40))  # резюме изменилось — оценить снова
+    rank: Mapped[int | None] = mapped_column(Integer)  # место в поиске при последнем прогоне
     evaluated_at: Mapped[datetime] = mapped_column(DateTime, default=now)
     model: Mapped[str | None] = mapped_column(String(128))
+    decision: Mapped[str | None] = mapped_column(String(16))  # invite|maybe|reject
+    decision_reason: Mapped[str | None] = mapped_column(String(64))
+
+
+class Feedback(Base):
+    """Отметки «Неверно» у доводов; из них собирается блок «Агент запомнил»."""
+
+    __tablename__ = "feedback"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    candidate_id: Mapped[int | None] = mapped_column(ForeignKey("candidates.id"))
+    vacancy_id: Mapped[int | None] = mapped_column(ForeignKey("vacancies.id"), index=True)
+    target: Mapped[str] = mapped_column(String(16))  # reason|concern|field
+    text: Mapped[str] = mapped_column(Text)
+    kind: Mapped[str] = mapped_column(String(16))  # not_in_resume|misread|irrelevant|other
+    scope: Mapped[str] = mapped_column(String(16), default="vacancy")  # vacancy|all
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
 
 class Duplicate(Base):

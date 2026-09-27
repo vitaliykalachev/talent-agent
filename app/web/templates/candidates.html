@@ -2,14 +2,14 @@
 {% block title %}Кандидаты · Кадровый агент{% endblock %}
 {% block content %}
 <h1>Кандидаты</h1>
-<p class="sub">Поиск по имени, должности и городу. Поиск по смыслу появится на следующем этапе.</p>
+<p class="sub">Опишите словами, кого ищете: агент найдёт по смыслу, даже если в резюме сказано иначе. Телефон, почту или ФИО ищем точно по контактам.</p>
 
 <form class="filters" method="get" action="/candidates"
       hx-get="/candidates" hx-target="#results" hx-push-url="true"
-      hx-trigger="input changed delay:400ms from:input[name=q], change from:select, submit">
-  <div>
-    <label for="q">Поиск</label>
-    <input id="q" type="search" name="q" value="{{ q }}" placeholder="Фамилия, должность или город">
+      hx-trigger="change from:select, change from:input[type=number], submit">
+  <div class="grow">
+    <label for="q">Опишите, кого ищете</label>
+    <input id="q" type="search" name="q" value="{{ q }}" placeholder="руководитель производства, запуск цеха с нуля, Поволжье">
   </div>
   <div>
     <label for="city">Город</label>
@@ -19,6 +19,14 @@
     </select>
   </div>
   <div>
+    <label for="min_years">Стаж от, лет</label>
+    <input id="min_years" type="number" min="0" step="1" name="min_years" value="{{ min_years }}">
+  </div>
+  <div>
+    <label for="max_salary">Зарплата до, ₽</label>
+    <input id="max_salary" type="number" min="0" step="10000" name="max_salary" value="{{ max_salary }}">
+  </div>
+  <div>
     <label for="fresh">Свежесть резюме</label>
     <select id="fresh" name="fresh">
       <option value="">Любая</option>
@@ -26,7 +34,14 @@
       <option value="stale"{% if fresh == "stale" %} selected{% endif %}>Старше или без даты</option>
     </select>
   </div>
-  <div><button class="button ghost" type="submit">Найти</button></div>
+  <div>
+    <label for="sort">Порядок</label>
+    <select id="sort" name="sort">
+      <option value="meaning"{% if sort != "fresh" %} selected{% endif %}>По смыслу</option>
+      <option value="fresh"{% if sort == "fresh" %} selected{% endif %}>Сначала свежие</option>
+    </select>
+  </div>
+  <div><button class="button" type="submit">Найти</button></div>
 </form>
 
 <div id="results">{% include "candidates_rows.html" %}</div>

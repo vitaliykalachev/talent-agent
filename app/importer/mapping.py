@@ -28,7 +28,7 @@ FIELDS = {
 NAME_RULES = [
     ("birth", ["дата рождения", "год рождения", "др", "birth", "birthday"]),
     ("resume_date", ["дата обновления", "обновлено", "дата резюме", "дата изменения", "updated"]),
-    ("resume_file", ["файл", "file"]),
+    ("resume_file", ["файл*", "file*"]),  # «*» — любые словоформы: «имя файла»
     ("resume_text", ["текст резюме", "резюме", "опыт работы", "resume", "cv"]),
     ("full_name", ["фио", "ф и о", "имя кандидата", "кандидат", "full name"]),
     ("last_name", ["фамилия", "last name", "surname"]),
@@ -48,10 +48,14 @@ def _clean(header: str) -> str:
     return " ".join(re.sub(r"[^\w]+", " ", text).split())
 
 
+def _pattern(p: str) -> str:
+    return rf"\b{re.escape(p[:-1])}\w*" if p.endswith("*") else rf"\b{re.escape(p)}\b"
+
+
 def _by_name(header: str) -> str:
     text = _clean(header)
     for field, patterns in NAME_RULES:
-        if any(re.search(rf"\b{re.escape(p)}\b", text) for p in patterns):
+        if any(re.search(_pattern(p), text) for p in patterns):
             return field
     return ""
 

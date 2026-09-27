@@ -8,6 +8,7 @@
 </p>
 
 {% if job %}{% include "job.html" %}{% endif %}
+{% include "parse_offer.html" %}
 
 <form method="post" action="/upload/{{ batch.id }}/start">
 {% if columns %}

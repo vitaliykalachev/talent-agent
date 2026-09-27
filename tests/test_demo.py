@@ -19,3 +19,11 @@ def test_demo_set_imports_as_300_candidates_with_duplicates_and_stale(tmp_path, 
     assert session.scalar(select(func.count(Duplicate.id))) == 15
     assert count(active, Candidate.stale.is_(True)) == 60  # 20 % старше полутора лет
     assert count(active, Candidate.external_id.is_(None)) == 0  # все файлы связаны со строками
+
+
+def test_key_file_not_copied_into_image():
+    """COPY . . в Dockerfile не должен класть .env с ключом в образ."""
+    from pathlib import Path
+
+    ignored = (Path(__file__).parent.parent / ".dockerignore").read_text().split()
+    assert ".env" in ignored

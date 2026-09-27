@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Новая вакансия · Кадровый агент{% endblock %}
+{% block content %}
+<p><a href="/vacancies">← Все вакансии</a></p>
+<h1>Новая вакансия</h1>
+{% if error %}<div class="callout stop"><p>{{ error }}</p></div>{% endif %}
+<form class="card settings" method="post" action="/vacancies/new">
+  <label for="description">Опишите вакансию так, как рассказали бы коллеге</label>
+  <textarea id="description" name="description" rows="8" required placeholder="Ищем начальника литейного цеха на завод в Самаре: руководил цехом от трёх лет, литьё под давлением, желательно бережливое производство. Люди только из продаж не нужны.">{{ form.get("description", "") }}</textarea>
+  <label for="title">Название <small>можно не заполнять: агент предложит сам</small></label>
+  <input id="title" type="text" name="title" value="{{ form.get('title', '') }}">
+  <h4>Обязательные условия</h4>
+  <div class="grid2">
+    <div><label for="city">Город</label><input id="city" type="text" name="city" value="{{ form.get('city', '') }}"></div>
+    <div><label for="min_years">Стаж от, лет</label><input id="min_years" type="number" min="0" step="1" name="min_years" value="{{ form.get('min_years', '') }}"></div>
+    <div><label for="max_salary">Зарплата до, ₽</label><input id="max_salary" type="number" min="0" step="10000" name="max_salary" value="{{ form.get('max_salary', '') }}"></div>
+    <div><label><input type="checkbox" name="fresh" value="1"{% if form.get('fresh') %} checked{% endif %}> Только резюме свежее полутора лет</label></div>
+  </div>
+  <label for="top_n">Сколько кандидатов показать</label>
+  <input id="top_n" type="number" min="1" max="200" name="top_n" value="{{ form.get('top_n', 40) }}">
+  <p><button class="button" type="submit">Разобрать описание</button></p>
+  <p><small>Агент выделит обязательные и желательные требования, а вы поправите их до оценки. Разбор займёт 10–30 секунд.</small></p>
+</form>
+{% endblock %}

@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Разбор резюме · Кадровый агент{% endblock %}
+{% block content %}
+<p><a href="/">← На главную</a></p>
+<h1>{% if scope == "trial" %}Пробный разбор{% elif scope == "retry" %}Разобрать ещё раз{% else %}Разбор всей базы{% endif %}</h1>
+{% if est.count %}
+<div class="card confirm">
+  <p class="lead">Разберём {{ est.count|num }} резюме. Займёт {{ duration }}, будет стоить примерно {{ price }}.</p>
+  <p>Модели уходит текст без ФИО, телефонов, почты и ссылок, оригиналы остаются у вас. <a href="/parse/preview" target="_blank">Показать, что уходит модели</a></p>
+  <form method="post" action="/parse">
+    <input type="hidden" name="scope" value="{{ scope }}">
+    {% if job_id %}<input type="hidden" name="job" value="{{ job_id }}">{% endif %}
+    <button class="button" type="submit">Начать разбор</button>
+    <a class="button ghost" href="/">Вернуться</a>
+  </form>
+</div>
+{% else %}
+<div class="callout ok"><p>Разбирать нечего: все резюме уже разобраны.</p></div>
+{% endif %}
+{% endblock %}

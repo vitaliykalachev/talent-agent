@@ -41,6 +41,8 @@ from app.jobs import enqueue, stopping
 from app.models import Candidate, ImportBatch, Job
 
 CHUNK = 50
+HEADER_LINES = 12
+HEADER_END_RE = re.compile(r"(?i)^(опыт работы|опыт|трудовая деятельность|experience)\b")
 
 
 def batch_dir(batch_id: int) -> Path:
@@ -103,13 +105,35 @@ def _joined(values: list) -> str:
     return " ; ".join(str(v) for v in values)
 
 
-def process_row(session: Session, headers: list[str], fields: list[str], row: list) -> None:
+def split_contacts(text: str) -> tuple[list[str], list[str], list[str]]:
+    """Телефоны и почта из шапки резюме и отдельно контакты из тела.
+
+    Шапка — первые строки до раздела «Опыт работы». Контакты ниже бывают чужими
+    (рекомендатели, прежние работодатели), поэтому в автосклейку дублей не идут.
+    """
+    lines = (text or "").splitlines()
+    cut = next(
+        (i for i, ln in enumerate(lines) if HEADER_END_RE.match(ln.strip(" #*_\t"))), len(lines)
+    )
+    nonempty = [i for i, ln in enumerate(lines) if ln.strip()]
+    cut = min(cut, nonempty[HEADER_LINES] if len(nonempty) > HEADER_LINES else len(lines))
+    head, body = "\n".join(lines[:cut]), "\n".join(lines[cut:])
+    phones, emails = extract_phones(head), extract_emails(head)
+    known = {*phones, *emails}
+    extra = [c for c in [*extract_phones(body), *extract_emails(body)] if c not in known]
+    return phones, emails, list(dict.fromkeys(extra))
+
+
+def process_row(
+    session: Session, headers: list[str], fields: list[str], row: list, batch_id: int | None = None
+) -> None:
     values: dict[str, list] = {}
     lines = []
     for header, field, value in zip(headers, fields, row, strict=False):
-        if not field or value is None or not str(value).strip():
+        if value is None or not str(value).strip():
             continue
-        values.setdefault(field, []).append(value)
+        if field:
+            values.setdefault(field, []).append(value)
         if field not in ("resume_text", "resume_file"):
             shown = value.strftime("%d.%m.%Y") if isinstance(value, datetime) else value
             lines.append(f"{header}: {shown}")
@@ -121,18 +145,19 @@ def process_row(session: Session, headers: list[str], fields: list[str], row: li
         str(first[k]) for k in ("last_name", "first_name", "middle_name") if k in first
     )
     resume_date = parse_date(first.get("resume_date")) or extract_resume_date(resume)
+    head_phones, head_emails, body = split_contacts(resume)
+    phones = list(dict.fromkeys(extract_phones(_joined(values.get("phone", []))) + head_phones))
+    emails = list(dict.fromkeys(extract_emails(_joined(values.get("email", []))) + head_emails))
     session.add(
         Candidate(
+            batch_id=batch_id,
             external_id=str(first["external_id"]).strip() if "external_id" in first else None,
             raw_text=raw_text,
             source_file=str(first["resume_file"]).strip() if "resume_file" in first else None,
             full_name=normalize_name(name),
-            phones=extract_phones(_joined(values.get("phone", []))) + extract_phones(resume),
-            emails=list(
-                dict.fromkeys(
-                    extract_emails(_joined(values.get("email", []))) + extract_emails(resume)
-                )
-            ),
+            phones=phones,
+            emails=emails,
+            body_contacts=[c for c in body if c not in {*phones, *emails}],
             city=normalize_city(first.get("city")) or extract_city(resume),
             birth_year=parse_year(first.get("birth")) or extract_birth_year(resume),
             resume_date=resume_date,
@@ -147,8 +172,12 @@ def _unique(session: Session, *conditions) -> Candidate | None:
     return found[0] if len(found) == 1 else None
 
 
-def find_owner(session: Session, path: Path, text: str) -> Candidate | None:
-    """Строка выгрузки для файла: по ID в имени файла, по колонке с файлом, по ФИО."""
+def find_owner(
+    session: Session, path: Path, text: str, batch_id: int | None = None
+) -> Candidate | None:
+    """Строка выгрузки для файла: по ID в имени файла и по колонке с файлом — во всей базе,
+    по ФИО — только среди записей текущей загрузки (однофамильцы из прошлых загрузок
+    не должны получить чужое резюме)."""
     session.flush()
     token = re.split(r"[\s_\-.]+", path.stem)[0]
     if token and (c := _unique(session, Candidate.external_id == token)):
@@ -157,32 +186,40 @@ def find_owner(session: Session, path: Path, text: str) -> Candidate | None:
         return c
     stem_name = " ".join(path.stem.replace("_", " ").split())
     names = [normalize_name(stem_name) if looks_like_name(stem_name) else None, find_name(text)]
+    in_batch = Candidate.batch_id == batch_id
     for name in filter(None, names):
-        if c := _unique(session, Candidate.full_name == name):
+        if c := _unique(session, in_batch, Candidate.full_name == name):
             return c
         short = " ".join(name.split()[:2])
         if c := _unique(
-            session, or_(Candidate.full_name == short, Candidate.full_name.like(f"{short} %"))
+            session,
+            in_batch,
+            or_(Candidate.full_name == short, Candidate.full_name.like(f"{short} %")),
         ):
             return c
     return None
 
 
-def process_document(session: Session, path: Path) -> str | None:
+def process_document(session: Session, path: Path, batch_id: int | None = None) -> str | None:
     """Добавляет текст файла к строке выгрузки или создаёт кандидата; возвращает ошибку."""
     try:
         text = document_text(path)
-    except Exception as exc:  # битый или нечитаемый файл не должен останавливать партию
-        return f"{path.name}: {type(exc).__name__}"
+    except Exception:  # битый или нечитаемый файл не должен останавливать партию
+        return f"{path.name}: файл повреждён"
     if not text:
-        return f"{path.name}: пустой файл"
-    owner = find_owner(session, path, text)
-    phones, emails = extract_phones(text), extract_emails(text)
+        reason = "скан без текста" if path.suffix.lower() == ".pdf" else "пустой файл"
+        return f"{path.name}: {reason}"
+    owner = find_owner(session, path, text, batch_id)
+    phones, emails, body = split_contacts(text)
     if owner:
         owner.raw_text = f"{owner.raw_text}\n\n{text}".strip()
         owner.source_file = path.name
         owner.phones = list(dict.fromkeys([*owner.phones, *phones]))
         owner.emails = list(dict.fromkeys([*owner.emails, *emails]))
+        known = {*owner.phones, *owner.emails}
+        owner.body_contacts = [
+            c for c in dict.fromkeys([*owner.body_contacts, *body]) if c not in known
+        ]
         owner.city = owner.city or extract_city(text)
         owner.birth_year = owner.birth_year or extract_birth_year(text)
         owner.resume_date = owner.resume_date or extract_resume_date(text)
@@ -191,6 +228,8 @@ def process_document(session: Session, path: Path) -> str | None:
     resume_date = extract_resume_date(text)
     session.add(
         Candidate(
+            batch_id=batch_id,
+            body_contacts=body,
             raw_text=text,
             source_file=path.name,
             full_name=find_name(text),
@@ -222,9 +261,9 @@ def run_import(job_id: int) -> None:
             end = min(job.progress + CHUNK, job.total)
             for i in range(job.progress, end):
                 if i < len(rows):
-                    process_row(session, headers, batch.mapping, rows[i])
+                    process_row(session, headers, batch.mapping, rows[i], batch.id)
                     batch.rows_ok += 1
-                elif error := process_document(session, docs[i - len(rows)]):
+                elif error := process_document(session, docs[i - len(rows)], batch.id):
                     errors.append(error)
                 else:
                     batch.rows_ok += 1

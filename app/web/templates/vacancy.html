@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% block title %}{{ v.title or "Вакансия" }} · Кадровый агент{% endblock %}
+{% block content %}
+<p><a href="/vacancies">← Все вакансии</a></p>
+<div class="headline">
+  <h1>{{ v.title or "Без названия" }}</h1>
+  {% if evaluated %}<a class="button ghost" href="/vacancies/{{ v.id }}/results">Результат по вакансии</a>{% endif %}
+</div>
+<details class="card"><summary>Описание вакансии</summary><p class="prewrap">{{ v.description }}</p></details>
+
+<section class="card" id="portrait">
+  <h2>Портрет кандидата</h2>
+  <p class="sub">Так агент понял вакансию. Удалите лишнее, поправьте и допишите: по этим требованиям он проверит каждое резюме.</p>
+  {% if v.requirements|length > MANY %}
+  <div class="callout warn"><p>Требований больше {{ MANY }}: оценка размывается, и главное теряется среди второстепенного. Оставьте то, без чего кандидат точно не подойдёт.</p></div>
+  {% endif %}
+  {% for kind, label in KINDS.items() %}
+  {% set items = v.requirements|selectattr("kind", "equalto", kind)|list %}
+  <h4>{{ label }}</h4>
+  <div class="plates">
+    {% for r in items %}
+    <div class="plate {{ kind }}{% if r.flag %} flagged{% endif %}">
+      <span class="name">{{ r.name }}</span>{% if r.source == "user" %} <small class="edited">добавлено вами</small>{% endif %}
+      {% if r.flag %}
+      <div class="flag">
+        {% if r.flag == "discriminatory" %}<strong>Так писать нельзя.</strong> {{ FAIR_HINT }} В оценке не участвует, пока не замените или не удалите.{% else %}<strong>Расплывчато.</strong> {{ VAGUE_HINT }}{% endif %}
+        {% if r.suggestion %}
+        <form method="post" action="/vacancies/{{ v.id }}/requirements" class="inline">
+          <input type="hidden" name="action" value="accept"><input type="hidden" name="rid" value="{{ r.id }}">
+          <button class="button ghost" type="submit">Заменить на «{{ r.suggestion }}»</button>
+        </form>
+        {% endif %}
+      </div>
+      {% endif %}
+      <details class="fix"><summary>Исправить</summary>
+        <form method="post" action="/vacancies/{{ v.id }}/requirements">
+          <input type="hidden" name="action" value="edit"><input type="hidden" name="rid" value="{{ r.id }}">
+          <input type="text" name="name" value="{{ r.name }}" required>
+          <select name="kind">{% for k, l in KINDS.items() %}<option value="{{ k }}"{% if k == kind %} selected{% endif %}>{{ l }}</option>{% endfor %}</select>
+          <button class="button" type="submit">Сохранить</button>
+        </form>
+      </details>
+      <form method="post" action="/vacancies/{{ v.id }}/requirements" class="inline remove">
+        <input type="hidden" name="action" value="delete"><input type="hidden" name="rid" value="{{ r.id }}">
+        <button class="x" type="submit" title="Удалить требование" aria-label="Удалить требование «{{ r.name }}»">×</button>
+      </form>
+    </div>
+    {% else %}
+    <p class="none">{% if kind == "avoid" %}Ничего не указано{% else %}Нет требований{% endif %}</p>
+    {% endfor %}
+  </div>
+  {% endfor %}
+  <form class="add-plate" method="post" action="/vacancies/{{ v.id }}/requirements">
+    <input type="hidden" name="action" value="add">
+    <label for="new-req">Добавить требование</label>
+    <input id="new-req" type="text" name="name" placeholder="Руководил участком литья от 3 лет" required>
+    <select name="kind">{% for k, l in KINDS.items() %}<option value="{{ k }}">{{ l }}</option>{% endfor %}</select>
+    <button class="button ghost" type="submit">Добавить</button>
+  </form>
+</section>
+
+<details class="card" id="conditions"{% if not v.hard_filters %} open{% endif %}>
+  <summary>Обязательные условия{% if v.hard_filters %}:
+    {% if v.hard_filters.city %}город {{ v.hard_filters.city }}{% endif %}
+    {% if v.hard_filters.min_years %} · стаж от {{ "%g"|format(v.hard_filters.min_years) }} лет{% endif %}
+    {% if v.hard_filters.max_salary %} · зарплата до {{ v.hard_filters.max_salary|num }} ₽{% endif %}
+    {% if v.hard_filters.fresh %} · резюме свежее полутора лет{% endif %}{% endif %}
+    · показать {{ v.top_n }}</summary>
+  <form class="settings" method="post" action="/vacancies/{{ v.id }}/conditions">
+    <div class="grid2">
+      <div><label for="city">Город</label><input id="city" type="text" name="city" value="{{ v.hard_filters.city or '' }}"></div>
+      <div><label for="min_years">Стаж от, лет</label><input id="min_years" type="number" min="0" step="1" name="min_years" value="{{ v.hard_filters.min_years or '' }}"></div>
+      <div><label for="max_salary">Зарплата до, ₽</label><input id="max_salary" type="number" min="0" step="10000" name="max_salary" value="{{ v.hard_filters.max_salary or '' }}"></div>
+      <div><label><input type="checkbox" name="fresh" value="1"{% if v.hard_filters.fresh %} checked{% endif %}> Только резюме свежее полутора лет</label></div>
+    </div>
+    <label for="top_n">Сколько кандидатов показать</label>
+    <input id="top_n" type="number" min="1" max="200" name="top_n" value="{{ v.top_n }}">
+    <button class="button" type="submit">Сохранить условия</button>
+  </form>
+</details>
+
+<section class="card confirm" id="run">
+  {% if job and job.status in ("queued", "running", "paused") %}
+  {% include "eval_job.html" %}
+  {% elif not offers %}
+  <p>Добавьте хотя бы одно обязательное или желательное требование: без него оценивать не по чему.</p>
+  {% elif not offers[1].count %}
+  <p class="lead">Все найденные кандидаты уже оценены по этим требованиям.</p>
+  <p>Агент оценит заново, когда вы поправите требования или обновится резюме. <a href="/vacancies/{{ v.id }}/results">Открыть результат</a></p>
+  {% else %}
+  <p>Модели уходит текст резюме без ФИО, телефонов, почты и ссылок, оригиналы остаются у вас.</p>
+  <div class="offers">
+    {% for o in offers %}
+    {% if o.count %}
+    <form method="post" action="/vacancies/{{ v.id }}/evaluate">
+      <input type="hidden" name="scope" value="{{ 'trial' if loop.first else 'all' }}">
+      <button class="button{% if not loop.first %} ghost{% endif %}" type="submit">{% if loop.first %}Оценить {{ o.limit }} для проверки{% else %}Оценить {{ o.limit }}{% endif %}</button>
+      <small>{{ o.count }} {{ plural(o.count, "кандидат", "кандидата", "кандидатов") }} · займёт {{ o.duration }} · примерно {{ o.price }}</small>
+    </form>
+    {% endif %}
+    {% endfor %}
+  </div>
+  {% endif %}
+</section>
+
+<section class="card" id="memory">
+  <h2>Агент запомнил</h2>
+  {% for f in memory %}
+  <div class="memory">
+    <span>«{{ f.text }}» — {{ FEEDBACK_KINDS[f.kind]|lower|replace("…", "") }}{% if f.candidate_id %}, {{ names.get(f.candidate_id, "") }}{% endif %} <small>{{ f.created_at|short_date }}</small></span>
+    <form method="post" action="/feedback/{{ f.id }}/delete" class="inline">
+      <input type="hidden" name="back" value="/vacancies/{{ v.id }}#memory">
+      <button class="button ghost" type="submit">Удалить</button>
+    </form>
+  </div>
+  {% else %}
+  <p class="none">Пока ничего. Нажмите «Неверно» у довода в результате, и агент учтёт это при следующей оценке.</p>
+  {% endfor %}
+</section>
+{% endblock %}

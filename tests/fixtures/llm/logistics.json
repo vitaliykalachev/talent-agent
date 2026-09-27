@@ -1,0 +1,37 @@
+{
+ "match": "ООО «Деловые Линии»",
+ "response": {
+  "desired_position": "Начальник склада",
+  "positions": [
+   {
+    "title": "Начальник склада",
+    "company": "ООО «Деловые Линии»",
+    "industry": "логистика",
+    "start": "2017",
+    "end": "по н. в.",
+    "source_lines": {"__lines__": "ООО «Деловые Линии», начальник склада"}
+   },
+   {
+    "title": "Кладовщик",
+    "company": "ООО «Магнит»",
+    "start": "2013",
+    "end": "2017",
+    "source_lines": [900, 901]
+   }
+  ],
+  "skills": [
+   "WMS",
+   "1С:УТ",
+   "складская логистика"
+  ],
+  "total_years": 13,
+  "city": "Новосибирск",
+  "relocation": "no_relocation",
+  "salary_expect": null,
+  "languages": [],
+  "education": [],
+  "summary": "Начальник склада класса А. Внедрила WMS. Опыт в логистике больше десяти лет.",
+  "summary_quote": "придумано моделью, в резюме такого нет",
+  "resume_date": null
+ }
+}

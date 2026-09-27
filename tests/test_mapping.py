@@ -52,3 +52,8 @@ def test_mapping_does_not_assign_same_field_twice_by_content():
     headers = ["А", "Б"]
     rows = [["ivan@mail.ru", "ivan@mail.ru"], ["o@ya.ru", "o@ya.ru"]]
     assert guess_mapping(headers, rows) == ["email", ""]
+
+
+def test_mapping_file_name_word_forms():
+    headers = ["Имя файла резюме", "Файл", "Текст резюме"]
+    assert guess_mapping(headers, []) == ["resume_file", "resume_file", "resume_text"]

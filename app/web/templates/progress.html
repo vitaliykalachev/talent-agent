@@ -1,0 +1,35 @@
+{# Карточка обработки базы: этапы, прогресс текущего, итог разбора. #}
+{% set live = flow.live %}
+{% set last = flow.jobs.parse %}
+<div id="progress"{% if live and live.status != "paused" %} hx-get="/progress" hx-trigger="every 2s" hx-swap="outerHTML"{% endif %}>
+{% if live %}
+<div class="card">
+  {% set pct = (100 * live.progress // live.total) if live.total else 0 %}
+  <h4>{% if live.kind == "parse" %}Разбираем резюме{% else %}Считаем смысловые отпечатки{% endif %}: {{ live.progress|num }} из {{ live.total|num }}{% if live.status == "paused" %} — приостановлено{% endif %}</h4>
+  <div class="bar-track"><div class="bar-fill" style="width:{{ pct }}%"></div></div>
+  {% if live.status != "paused" %}<p>{{ remaining(live) }}</p>{% endif %}
+  <ul class="stages">
+    {% for name, state in flow.stages %}<li class="st-{{ 'done' if state == 'готово' else 'run' if state == 'идёт' else 'wait' }}">{{ name }} — {{ state }}</li>{% endfor %}
+  </ul>
+  <p><small>Можно закрыть вкладку и работать дальше.</small></p>
+  {% if live.status == "paused" %}
+  <form method="post" action="/jobs/{{ live.id }}/resume"><button class="button" type="submit">Продолжить</button></form>
+  {% else %}
+  <form method="post" action="/jobs/{{ live.id }}/pause"><button class="button ghost" type="submit">Приостановить</button></form>
+  {% endif %}
+</div>
+{% elif last %}
+<div class="card">
+  <h4>Разбор резюме: {{ last|job_status }}</h4>
+  {% if last.status == "failed" %}
+  <p>{{ last.error }}</p>
+  {% elif last.error %}
+  <p>{{ problem_summary(last) }}. Сетевые сбои агент уже повторил сам до трёх раз.</p>
+  <p><a class="button ghost" href="/jobs/{{ last.id }}/problems">Показать список</a>
+     <a class="button" href="/parse?scope=retry&job={{ last.id }}">Разобрать ещё раз</a></p>
+  {% else %}
+  <p>Разобрано {{ last.total|num }}. <a href="/candidates">Искать кандидатов</a></p>
+  {% endif %}
+</div>
+{% endif %}
+</div>

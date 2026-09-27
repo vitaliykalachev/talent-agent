@@ -166,3 +166,120 @@ dl.facts dd{margin:0}
   table.stack td.name{font-size:17px;font-weight:700;padding-bottom:8px}
   table.stack td.num{text-align:left;white-space:normal}
 }
+
+/* ── Этап 2: разбор, поиск, карточка ─── */
+.actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:12px}
+.offer{margin:22px 0}
+.confirm .lead{font-size:17px;color:var(--ink);font-weight:600}
+.confirm form{display:flex;flex-wrap:wrap;gap:10px;margin-top:14px}
+ul.stages{list-style:none;padding:0;margin:10px 0;font-size:14px}
+ul.stages li{margin-bottom:4px;padding-left:20px;position:relative}
+ul.stages li::before{content:"○";position:absolute;left:0;color:var(--ink-mute)}
+ul.stages li.st-done::before{content:"✓";color:var(--green)}
+ul.stages li.st-run::before{content:"●";color:var(--accent)}
+form.inline{display:inline}
+.status-line{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:0 0 18px}
+input[type=number],input[type=password],textarea{
+  font:inherit;font-size:15px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;
+  background:var(--bg);color:var(--ink);max-width:100%;
+}
+input[type=number]{width:130px}
+.settings input[type=text],.settings input[type=password]{width:100%}
+.prices{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:0 14px}
+form.filters .grow{flex:1 1 320px}
+form.filters .grow input{width:100%}
+.searching{margin:6px 0 10px;color:var(--ink-soft)}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin:6px 0 10px}
+.chip{
+  display:inline-flex;gap:6px;align-items:center;font-size:13.5px;padding:4px 10px;border-radius:20px;
+  background:var(--accent-soft);color:var(--accent);text-decoration:none;
+}
+.frag{font-size:13.5px;color:var(--ink-soft);font-weight:400;margin-top:6px;line-height:1.5}
+mark{background:#fff1b8;color:inherit;border-radius:3px;padding:0 2px}
+mark:target{background:#ffd666;outline:2px solid var(--amber)}
+.none{color:var(--ink-mute);font-style:italic}
+.edited{color:var(--green)}
+.pos{margin-bottom:8px}
+details.fix{display:inline-block;margin-left:6px;font-size:13px}
+details.fix summary{cursor:pointer;color:var(--accent);list-style:none}
+details.fix[open]{display:block;margin:6px 0}
+details.fix form{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px}
+details.fix textarea{width:100%}
+.tabs > input,.tabs > label{display:none}
+.split{display:grid;grid-template-columns:1fr 1fr;gap:22px;align-items:start}
+.split .source{position:sticky;top:10px;max-height:90vh;overflow:auto}
+@media (max-width:820px){
+  .split{grid-template-columns:1fr}
+  .split .source{position:static;max-height:none}
+  .tabs > label{
+    display:inline-block;padding:8px 14px;border:1px solid var(--line);border-radius:20px;
+    margin:0 6px 14px 0;font-size:14px;color:var(--ink);cursor:pointer;
+  }
+  .tabs > input:checked + label{background:var(--accent);color:#fff;border-color:var(--accent)}
+  #tab-agent:checked ~ .split .source{display:none}
+  #tab-source:checked ~ .split .agent{display:none}
+  /* переход по ссылке к строке резюме показывает вкладку «Резюме» без JS; ссылка
+     во вкладке «Что понял агент» уводит якорь обратно */
+  #tab-agent:checked ~ .split:has(.source :target) .source{display:block}
+  #tab-agent:checked ~ .split:has(.source :target) .agent{display:none}
+  .tabs:has(.source :target) > label[for=tab-source]{background:var(--accent);color:#fff}
+  .tabs:has(.source :target) > label[for=tab-agent]{background:none;color:var(--ink)}
+  .tabs > label a{color:inherit;text-decoration:none}
+  input[type=number]{width:100%}
+}
+
+/* ── Этап 3: вакансии и результат ───────────────────────────────────────── */
+.headline{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px}
+.prewrap{white-space:pre-wrap}
+.plates{display:flex;flex-wrap:wrap;gap:8px;margin:4px 0 12px}
+.plate{position:relative;border:1px solid var(--line);border-radius:var(--radius);padding:6px 30px 6px 12px;background:var(--bg);max-width:100%}
+.plate.must{border-color:var(--accent);background:var(--accent-soft)}
+.plate.avoid{border-color:var(--red);background:var(--red-bg)}
+.plate.flagged{border-style:dashed;border-color:var(--amber)}
+.plate .flag{font-size:13px;color:var(--amber);margin-top:4px}
+.plate .remove{position:absolute;top:2px;right:4px}
+.x{border:0;background:none;font-size:18px;line-height:1;color:var(--ink-mute);cursor:pointer;padding:4px}
+.x:hover{color:var(--red)}
+form.inline{display:inline}
+.add-plate{display:flex;flex-wrap:wrap;gap:8px;align-items:end}
+.add-plate label{width:100%}
+.add-plate input[type=text]{flex:1 1 240px}
+.offers{display:flex;flex-direction:column;gap:10px}
+.offers small{display:block;color:var(--ink-soft)}
+.memory{display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px solid var(--line-soft)}
+.notice{display:flex;flex-wrap:wrap;gap:12px;align-items:center}
+.notice p{flex:1 1 320px;margin:0}
+details.group>summary{list-style:none;cursor:pointer}
+details.group>summary h2{display:inline}
+details.group>summary h2 small{color:var(--ink-mute);font-weight:400}
+details.group>summary::before{content:"▸ ";color:var(--ink-mute)}
+details.group[open]>summary::before{content:"▾ "}
+.result header{display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px;align-items:baseline}
+.result .who{font-size:18px;font-weight:600}
+.result .meta{display:flex;gap:8px;align-items:baseline}
+.cat{font-weight:600}
+.cat.fit{color:var(--green)}
+.cat.maybe{color:var(--amber)}
+.cat.unfit,.cat.failed{color:var(--ink-soft)}
+.score{color:var(--ink-mute);font-size:14px}
+.counter{color:var(--ink-soft);font-size:14px;margin:4px 0}
+.result q{color:var(--ink-soft);font-style:italic}
+.result ul,.result ol{padding-left:20px}
+.verdict{display:inline-block;min-width:9em;font-size:13px;font-weight:600}
+.verdict.met{color:var(--green)}
+.verdict.partial{color:var(--amber)}
+.verdict.not_met{color:var(--red)}
+.verdict.no_data{color:var(--ink-mute)}
+details.wrong{display:inline-block;font-size:13px;margin-left:6px}
+details.wrong summary{cursor:pointer;color:var(--ink-mute);list-style:none;text-decoration:underline dotted}
+details.wrong[open]{display:block}
+details.wrong form{display:flex;flex-direction:column;gap:4px;margin:6px 0;padding:8px;border:1px solid var(--line);border-radius:var(--radius);background:var(--bg-soft)}
+.decide{display:flex;flex-wrap:wrap;gap:8px;align-items:flex-start;margin-top:10px}
+details.reject summary{list-style:none;cursor:pointer}
+details.reject[open]{flex-basis:100%}
+details.export summary{list-style:none;display:inline-block}
+details.export fieldset{border:0;padding:0;margin:8px 0}
+.callout.small{padding:6px 10px;font-size:14px}
+.history{padding-left:18px}
+.toast{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:10;display:flex;flex-wrap:wrap;gap:12px;align-items:center;max-width:calc(100% - 32px);padding:10px 16px;border-radius:var(--radius);background:var(--ink);color:#fff;box-shadow:0 4px 20px rgba(0,0,0,.2)}
+.toast .button.ghost{color:#fff;border-color:#fff}

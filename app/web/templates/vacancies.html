@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Вакансии · Кадровый агент{% endblock %}
+{% block content %}
+<div class="headline">
+  <h1>Вакансии</h1>
+  <a class="button" href="/vacancies/new">Новая вакансия</a>
+</div>
+{% if rows %}
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Вакансия</th><th>Создана</th><th class="num">Оценено</th><th></th></tr></thead>
+  <tbody>
+  {% for v, n in rows %}
+    <tr>
+      <td data-label="Вакансия"><a href="/vacancies/{{ v.id }}">{{ v.title or "Без названия" }}</a></td>
+      <td data-label="Создана">{{ v.created_at|short_date }}</td>
+      <td data-label="Оценено" class="num">{{ n|num }}</td>
+      <td>{% if n %}<a href="/vacancies/{{ v.id }}/results">Результат</a>{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<div class="callout"><p>Вакансий пока нет. Опишите первую так, как рассказали бы коллеге: агент выделит требования и найдёт кандидатов в базе.</p></div>
+{% endif %}
+{% endblock %}

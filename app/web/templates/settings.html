@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Настройки · Кадровый агент{% endblock %}
+{% block content %}
+<h1>Настройки</h1>
+{% if message %}<div class="callout {{ 'stop' if error else 'ok' }}"><p>{{ message }}</p></div>{% endif %}
+
+<form class="card settings" method="post" action="/settings">
+  <h4>Подключение к ИИ: сервис и ключ доступа</h4>
+  <div class="field">
+    <label for="llm_provider">Сервис</label>
+    <select id="llm_provider" name="llm_provider">
+      {% for key, label in [("anthropic", "Claude (Anthropic или ClaudeHub)"), ("openai", "Совместимый с OpenAI (например, YandexGPT)"), ("mock", "Записанные ответы, без интернета")] %}
+      <option value="{{ key }}"{% if values.llm_provider == key %} selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="field">
+    <label for="llm_base_url">Адрес сервиса</label>
+    <input id="llm_base_url" type="text" name="llm_base_url" value="{{ values.llm_base_url }}" placeholder="https://api.claudehub.fun">
+  </div>
+  <div class="field">
+    <label for="llm_api_key">Ключ доступа</label>
+    <input id="llm_api_key" type="password" name="llm_api_key" autocomplete="off" placeholder="{{ 'Ключ задан. Оставьте пустым, чтобы не менять' if has_key else 'Вставьте ключ' }}">
+  </div>
+  <div class="field">
+    <label for="llm_model_parse">Модель для разбора резюме</label>
+    <input id="llm_model_parse" type="text" name="llm_model_parse" value="{{ values.llm_model_parse }}">
+  </div>
+  <div class="field">
+    <label for="llm_model_eval">Модель для оценки под вакансию</label>
+    <input id="llm_model_eval" type="text" name="llm_model_eval" value="{{ values.llm_model_eval }}">
+  </div>
+
+  <h4>Цены сервиса, $ за миллион единиц текста</h4>
+  <p><small>Как в прайсе сервиса: отдельно за текст, который уходит модели, и за ответ. По ним считаем примерную стоимость разбора до старта.</small></p>
+  <div class="prices">
+    <div class="field"><label for="price_parse_in">Разбор: отправка</label><input id="price_parse_in" type="text" name="price_parse_in" value="{{ values.price_parse_in }}"></div>
+    <div class="field"><label for="price_parse_out">Разбор: ответ</label><input id="price_parse_out" type="text" name="price_parse_out" value="{{ values.price_parse_out }}"></div>
+    <div class="field"><label for="price_eval_in">Оценка: отправка</label><input id="price_eval_in" type="text" name="price_eval_in" value="{{ values.price_eval_in }}"></div>
+    <div class="field"><label for="price_eval_out">Оценка: ответ</label><input id="price_eval_out" type="text" name="price_eval_out" value="{{ values.price_eval_out }}"></div>
+    <div class="field"><label for="usd_rub">Курс доллара, ₽</label><input id="usd_rub" type="text" name="usd_rub" value="{{ values.usd_rub }}"></div>
+  </div>
+
+  <h4>Поиск по смыслу</h4>
+  <div class="field">
+    <label for="embed_model">Модель смыслового поиска</label>
+    <input id="embed_model" type="text" name="embed_model" value="{{ values.embed_model }}">
+    <small>Работает на этом компьютере, резюме никуда не уходят. После смены модели база пересчитается сама.</small>
+  </div>
+  <button class="button" type="submit">Сохранить</button>
+</form>
+
+<form method="post" action="/settings/check">
+  <button class="button ghost" type="submit">Проверить подключение</button>
+</form>
+{% endblock %}
