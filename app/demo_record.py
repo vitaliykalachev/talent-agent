@@ -21,7 +21,7 @@ from app.models import Vacancy
 EXTRA = 8  # оценок сверх top_n: другой компьютер может чуть иначе упорядочить поиск
 
 
-KEEP = ("CandidateProfile", "VacancyDraft")  # их можно взять из прошлой записи
+KEEP = ("CandidateProfile", "VacancyDraft", "Evaluation")  # берутся из прошлой записи
 
 
 class Recorder:
@@ -31,6 +31,7 @@ class Recorder:
 
     def __init__(self, folder: Path):
         self.answers: dict[str, dict] = {}
+        self.used: set[str] = set()  # в файл попадают только ответы этого прогона
         self.usage: Counter = Counter()
         for path in folder.glob("*.json"):
             for item in json.loads(path.read_text("utf-8")):
@@ -51,6 +52,7 @@ class Recorder:
         def recorded_call(schema, system, user):
             key = self._key(schema, user)
             name = f"{schema.__name__}:{key}"
+            self.used.add(name)
             if name in self.answers and "Прошлый ответ не прошёл проверку" not in user:
                 return self.answers[name]["response"]
             raw = call(schema, system, user)
@@ -88,7 +90,7 @@ class Recorder:
             old.unlink()
         groups = {"CandidateProfile": "parse", "VacancyDraft": "vacancy", "Evaluation": "evaluate"}
         for schema, name in groups.items():
-            items = [a for a in self.answers.values() if a["schema"] == schema]
+            items = [a for n, a in self.answers.items() if a["schema"] == schema and n in self.used]
             (folder / f"{name}.json").write_text(
                 json.dumps(items, ensure_ascii=False, indent=1), encoding="utf-8"
             )
@@ -104,4 +106,4 @@ class Recorder:
                 f"{purpose}: {calls} запросов, {sent} на входе, {got} на выходе, "
                 f"≈ {usd * config.number('usd_rub'):.1f} ₽"
             )
-        print(f"Записано ответов: {len(self.answers)}; всего ≈ {rub:.1f} ₽ по тарифам из настроек")
+        print(f"Записано ответов: {len(self.used)}; всего ≈ {rub:.1f} ₽ по тарифам из настроек")

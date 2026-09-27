@@ -35,9 +35,9 @@ def test_every_parsed_candidate_has_vector(demo):
     parsed = demo.scalar(select(Candidate.id).where(Candidate.parse_status == "parsed").limit(1))
     assert parsed is not None
     count = len(list(demo.scalars(select(Embedding.candidate_id))))
-    assert count == 300
+    assert count == 303  # 300 человек и 3 записи «Похоже на дубль»
     ids, matrix = embed.index()
-    assert len(ids) == 300 and matrix.shape == (300, 768)
+    assert len(ids) == 303 and matrix.shape == (303, 768)
 
 
 def test_launch_query_finds_casting_section(demo):

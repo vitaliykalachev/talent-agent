@@ -800,31 +800,9 @@ def generate(out: Path, seed: int = 42, today: date | None = None) -> tuple[Path
         )
 
     # 5 % дублей: тот же человек, другое оформление телефона или почты, более старая запись.
-    # Первые POSSIBLE из них — без общих контактов: то же ФИО, город и дата рождения, но
-    # телефон и почта другие. Сами не склеиваются, попадают в очередь «Похоже на дубль».
     fresh_people = [p for p in people if id(p) not in stale_ids]
-    doubled = rnd.sample(fresh_people, int(len(people) * DUPLICATE_SHARE))
-    # файл, названный по ФИО, при однофамильце в выгрузке не связать — таких не берём
-    possible = {id(p) for p in [p for p in doubled if p["where"] != "txt"][:POSSIBLE]}
-    for p in doubled:
+    for p in rnd.sample(fresh_people, int(len(people) * DUPLICATE_SHARE)):
         ext_id += rnd.randint(1, 7)
-        if id(p) in possible:
-            rows.append(
-                {
-                    "ID": str(ext_id),
-                    "ФИО": f"{p['last']} {p['first']} {p['middle']}",
-                    "Телефон": _fmt_phone(_phone(rnd, phones), 0),
-                    "E-mail": _email(rnd, p, emails),
-                    "Город": p["city"],
-                    "Должность": p["title"],
-                    "Компания": p["company"],
-                    "Дата рождения": p["birth"].strftime("%d.%m.%Y"),
-                    "Дата обновления": (p["updated"] - timedelta(days=200)).strftime("%d.%m.%Y"),
-                    "Резюме": p["text"],
-                }
-            )
-            answers.append({"match": f"ID: {ext_id}\n", "response": recorded_answer(p, p["facts"])})
-            continue
         by_phone = rnd.random() < 0.6
         rows.append(
             {
@@ -843,6 +821,28 @@ def generate(out: Path, seed: int = 42, today: date | None = None) -> tuple[Path
             }
         )
     rnd.shuffle(rows)
+
+    # Возможные дубли: то же ФИО, город и дата рождения, но телефон и почта другие. Сами
+    # не склеиваются, попадают в очередь «Похоже на дубль». Свой генератор и конец
+    # таблицы — остальная демо-база (и разметка eval/) от них не меняется.
+    extra = random.Random(seed + 1)
+    for p in extra.sample([p for p in fresh_people if p["where"] != "txt"], POSSIBLE):
+        ext_id += extra.randint(1, 7)
+        rows.append(
+            {
+                "ID": str(ext_id),
+                "ФИО": f"{p['last']} {p['first']} {p['middle']}",
+                "Телефон": _fmt_phone(_phone(extra, phones), 0),
+                "E-mail": _email(extra, p, emails),
+                "Город": p["city"],
+                "Должность": p["title"],
+                "Компания": p["company"],
+                "Дата рождения": p["birth"].strftime("%d.%m.%Y"),
+                "Дата обновления": (p["updated"] - timedelta(days=200)).strftime("%d.%m.%Y"),
+                "Резюме": p["text"],
+            }
+        )
+        answers.append({"match": f"ID: {ext_id}\n", "response": recorded_answer(p, p["facts"])})
 
     table = out / "crm_export.csv"
     with table.open("w", encoding="utf-8-sig", newline="") as f:

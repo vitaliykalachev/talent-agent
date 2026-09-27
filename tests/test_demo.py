@@ -21,13 +21,13 @@ def test_demo_set_imports_as_300_candidates_with_duplicates_and_stale(tmp_path, 
 
     active = Candidate.duplicate_of.is_(None)
     assert count(active) == 303  # 300 человек и 3 записи «похоже на дубль»
-    assert count() == 315  # 5 % намеренных дублей: 12 точных и 3 возможных
+    assert count() == 318  # 15 точных дублей (5 %) и 3 возможных
     status = dict(
         session.execute(select(Duplicate.status, func.count()).group_by(Duplicate.status)).all()
     )
-    assert status["merged"] == 12  # общий телефон или почта — склеены сами
+    assert status["merged"] == 15  # общий телефон или почта — склеены сами
     assert status["open"] >= 3  # то же ФИО, город и дата рождения, контакты разные
-    assert 60 <= count(active, Candidate.stale.is_(True)) <= 63  # 20 % старше полутора лет
+    assert count(active, Candidate.stale.is_(True)) == 60  # 20 % старше полутора лет
     assert count(active, Candidate.external_id.is_(None)) == 0  # все файлы связаны со строками
 
 
