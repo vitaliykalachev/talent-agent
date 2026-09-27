@@ -30,9 +30,19 @@ def enqueue(planned_at: datetime | None = None, fired_at: datetime | None = None
     """Ставит ночной прогон; `planned_at` пусто — «Запустить сейчас». Пока прогон в
     очереди или идёт, второй не ставится."""
     with db.SessionLocal() as s:
-        live = s.scalar(select(NightRun).where(NightRun.status.in_(("queued", "running"))).limit(1))
-        if live:
-            return live
+        working = {
+            j.payload.get("run_id")
+            for j in s.scalars(
+                select(Job).where(Job.kind == "night", Job.status.in_(("queued", "running")))
+            )
+        }
+        for live in s.scalars(select(NightRun).where(NightRun.status.in_(("queued", "running")))):
+            if live.id in working:
+                return live
+            # задача уже закончилась или пропала, а запись осталась «идёт» — прогон оборвался
+            live.status = "failed"
+            live.error = "Ночной прогон оборвался: приложение закрыли или компьютер выключился."
+            live.summary = {**live.summary, "error": live.error}
         run = NightRun(
             planned_at=planned_at,
             status="queued",
@@ -158,12 +168,13 @@ def run_night(job_id: int) -> None:
         job = s.get(Job, job_id)
         run = s.get(NightRun, job.payload["run_id"])
         started = datetime.now()
-        run.status, run.started_at = "running", started
-        job.status, job.total = "running", 4
-        summary = {**run.summary, "late": late_reason(run, started)}
-        run.summary = summary
-        s.commit()
+        summary = dict(run.summary)
         try:
+            run.status, run.started_at = "running", started
+            job.status, job.total = "running", 4
+            summary["late"] = late_reason(run, started)
+            run.summary = summary
+            s.commit()
             since = _since(s, run)
             newly_stale = _mark_stale(s)
             job.progress = 1
@@ -223,9 +234,10 @@ def run_night(job_id: int) -> None:
             run = s.get(NightRun, run.id)
             run.status, run.error = "failed", f"Ночной прогон не получился: {exc}"
             summary["error"] = run.error
-        run.finished_at = datetime.now()
-        run.summary = dict(summary)  # письмо строится из итога, поэтому сначала итог
-        run.summary = {**summary, "mail": mail.send_report(run)}
-        job = s.get(Job, job_id)
-        job.status, job.progress, job.finished_at = "done", job.total, datetime.now()
-        s.commit()
+        finally:  # запись прогона и задача закрываются, что бы ни случилось выше
+            run.finished_at = datetime.now()
+            run.summary = dict(summary)  # письмо строится из итога, поэтому сначала итог
+            run.summary = {**summary, "mail": mail.send_report(run)}
+            job = s.get(Job, job_id)
+            job.status, job.progress, job.finished_at = "done", job.total, datetime.now()
+            s.commit()

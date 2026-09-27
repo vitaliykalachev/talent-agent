@@ -40,7 +40,7 @@ BIRTH_RE = re.compile(
     rf"((?:дата\s+рожд(?:ения|\.)?|д\.\s?р\.|г\.\s?р\.|родил(?:ся|ась)|год\s+рождения)\s*:?\s*)"
     rf"{DATE_VALUE}(?:\s*г(?:ода|\.)?)?"
     r"|\b\d{4}\s*г\.?\s*р\.?"
-    r"|((?:возраст|мужчина|женщина|муж\.|жен\.|(?<![а-яё])мне)\s*[:,]?\s*)"
+    r"|((?:возраст|мужчина|женщина|муж\.|жен\.|(?<![а-яё])мне(?:\s+уже)?)\s*[:,—–-]?\s*)"
     r"\d{2}\s*(?:год|года|лет)\b",
     re.IGNORECASE,
 )
@@ -158,9 +158,22 @@ def numbered(text: str) -> str:
     return "\n".join(f"{i}| {line}" for i, line in enumerate(text.split("\n"), start=1))
 
 
+def line_range(value):
+    """[n] → [n, n], [7, 21, 23] → [7, 23]; пара [от, до] и остальное — как есть
+    (перевёрнутую пару отбросит проверка строк)."""
+    if isinstance(value, (list, tuple)) and len(value) != 2 and value:
+        try:
+            numbers = [int(v) for v in value]
+        except (TypeError, ValueError):
+            return value
+        return [min(numbers), max(numbers)]
+    return value
+
+
 def valid_lines(value, text: str) -> list[int] | None:
     """Диапазон [от, до] строк `text`, если он существует и опирается не только на
     плейсхолдеры обезличивания; иначе None («в резюме не сказано»)."""
+    value = line_range(value)
     if not isinstance(value, (list, tuple)) or len(value) != 2:
         return None
     try:

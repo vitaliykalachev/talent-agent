@@ -20,8 +20,9 @@ demo:
 	TA_DATA_DIR=data/demo uv run python -m app.demo
 	TA_DATA_DIR=data/demo uv run app
 
-# Один раз: прогнать демо через настоящий сервис ИИ и записать ответы в app/demo_data/llm/.
-# Нужен ключ в .env (или путь к файлу в TA_ENV_FILE); стоит около 150 ₽.
+# Прогнать демо через настоящий сервис ИИ и докупить недостающие ответы в app/demo_data/llm/
+# (записанные не оплачиваются снова). Нужен ключ в .env или в файле из TA_ENV_FILE;
+# запись с нуля стоила около 206 ₽.
 record-demo:
 	TA_DATA_DIR=data/demo uv run python -m app.demo --record
 

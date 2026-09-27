@@ -17,14 +17,14 @@ import re
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, BeforeValidator, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app import config, db, search
-from app.anonymize import anonymize, numbered, valid_lines
+from app.anonymize import anonymize, line_range, numbered, valid_lines
 from app.jobs import enqueue, stopping
 from app.llm import AuthError, LLMError, get_llm
 from app.models import Candidate, Feedback, Job, Match, Vacancy
@@ -65,7 +65,8 @@ DISCRIMINATORY_RE = re.compile(
     r"возраст|\bлет\s+до\b|\bдо\s+\d{2}\s+лет|\bот\s+\d{2}\s+до\s+\d{2}\s+лет|моложе|старше\s+\d"
     r"|мужчин|женщин|\bпол\b|национальн|славян|внешност|семейн|замуж|женат|без\s+детей"
     r"|\bдет(?:и|ей)\b|беремен|прописк|\b\d{2}\s*[–—-]\s*\d{2}\s*лет|девушк|\bпар(?:ень|ни|ня)\b"
-    r"|молод(?:ой|ая|ые|ых|ого|ому|ым|ую)\b|холост",
+    r"|молод(?:ой|ая|ые|ых|ого|ому|ым|ую)\b|холост|мужск|женск|\bпола\b|детьми|бездет"
+    r"|\b\d{2}\s*\+",
     re.IGNORECASE,
 )
 VAGUE_RE = re.compile(
@@ -347,10 +348,18 @@ def estimate(session: Session, v: Vacancy, limit: int, order=None) -> dict:
 # ── Оценка одного кандидата ─────────────────────────────────────────────────
 
 
+# Модель иногда присылает [31] или [7, 21, 23] вместо [от, до]: читаем как [31, 31] и
+# [7, 23]. Схема для модели — ровно два целых.
+Lines = Annotated[
+    Annotated[list[int], Field(min_length=2, max_length=2)] | None,
+    BeforeValidator(line_range),
+]
+
+
 class Check(BaseModel):
     requirement_id: str
     verdict: Literal["met", "partial", "not_met", "no_data"]
-    evidence_lines: list[int] | None = Field(
+    evidence_lines: Lines = Field(
         None, description="Номера строк резюме [от, до], на которых основан вердикт"
     )
     note: str = Field("", description="Коротко, что именно в этих строках")
@@ -358,7 +367,7 @@ class Check(BaseModel):
 
 class Concern(BaseModel):
     text: str
-    evidence_lines: list[int] | None = Field(None, description="[от, до] или null")
+    evidence_lines: Lines = Field(None, description="[от, до] или null")
 
 
 class Evaluation(BaseModel):

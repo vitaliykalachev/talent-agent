@@ -5,4 +5,6 @@ services:
       - "127.0.0.1:8000:8000"  # наружу не открываем, пока нет входа
     volumes:
       - ./data:/srv/data
+    environment:
+      - TZ=Europe/Moscow  # ночной прогон в 02:00 по Москве, а не по UTC
     restart: unless-stopped

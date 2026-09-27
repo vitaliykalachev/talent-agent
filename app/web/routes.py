@@ -1,5 +1,6 @@
 """Экраны раздела 2 плана: главная, загрузка, кандидаты, карточка, настройки."""
 
+import math
 import re
 import tempfile
 import time
@@ -401,11 +402,28 @@ def job_problems(request: Request, job_id: int):
 # ── Кандидаты ───────────────────────────────────────────────────────────────
 
 
+NUMBER_ERROR = "Укажите обычное число, например 3 или 150 000."
+
+
 def _number(value: str) -> float | None:
+    """Число фильтра; пусто или не число — None; inf, nan и больше миллиарда — 400."""
     try:
-        return float(value.replace(" ", "").replace(" ", "").replace(",", "."))
+        number = float(value.replace(" ", "").replace("\xa0", "").replace(",", "."))
     except ValueError:
         return None
+    if not math.isfinite(number) or abs(number) > 1e9:
+        raise HTTPException(400, NUMBER_ERROR)
+    return number
+
+
+def _small_int(value: str, default: int | None) -> int | None:
+    """Номер страницы или загрузки из адреса: не число — умолчание, огромное — 400."""
+    value = str(value).strip()
+    if not value.isdigit():
+        return default
+    if len(value) > 9:
+        raise HTTPException(400, NUMBER_ERROR)
+    return int(value)
 
 
 @router.get("/candidates", response_class=HTMLResponse)
@@ -418,10 +436,10 @@ def candidates(
     fresh: str = "",
     batch: str = "",
     sort: str = "meaning",
-    page: int = 1,
+    page: str = "1",
 ):
     salary = _number(max_salary)
-    page = max(page, 1)
+    page = max(_small_int(page, 1), 1)
     params = {
         "q": q,
         "city": city,
@@ -436,7 +454,7 @@ def candidates(
             (b.id, present.batch_label(b))
             for b in s.scalars(select(ImportBatch).order_by(ImportBatch.id.desc()))
         ]
-        batch_id = int(batch) if batch.isdigit() else None
+        batch_id = _small_int(batch, None)
         filters = Filters(
             city=city,
             min_years=_number(min_years),
@@ -623,17 +641,24 @@ def settings_form(request: Request):
 
 @router.post("/settings", response_class=HTMLResponse)
 async def settings_save(request: Request):
-    form = await request.form()
+    error = _save_settings(await request.form())
+    if error:
+        return _settings_page(request, error, error=True)
+    return _settings_page(request, "Сохранено.")
+
+
+def _save_settings(form) -> str | None:
+    """Сохраняет присланные поля «Настроек»; ошибка ввода — текст, ничего не сохранено."""
     values = {key: str(form.get(key, "")).strip() for key in SETTING_FIELDS if key in form}
     for secret in ("llm_api_key", "smtp_password"):
         if value := str(form.get(secret, "")).strip():
             values[secret] = value  # пустое поле — ключ или пароль не меняется
     if "night_time" in values and not schedule.parse_time(values["night_time"]):
-        return _settings_page(request, "Время укажите как 02:00.", error=True)
+        return "Время укажите как 02:00."
     if values.get("night_days", "daily") not in schedule.DAYS:
         values.pop("night_days")
     if values.get("smtp_port") and not values["smtp_port"].isdigit():
-        return _settings_page(request, "Порт почтового сервера — число, например 587.", error=True)
+        return "Порт почтового сервера — число, например 587."
     model_changed = values.get("embed_model") not in (None, config.get("embed_model"))
     config.save(values)
     schedule.reschedule()
@@ -641,7 +666,7 @@ async def settings_save(request: Request):
         with db.SessionLocal() as s:
             enqueue(s, "embed", {})
             s.commit()
-    return _settings_page(request, "Сохранено.")
+    return None
 
 
 @router.post("/settings/check", response_class=HTMLResponse)
@@ -662,8 +687,9 @@ def settings_check(request: Request):
 
 
 @router.post("/settings/mail-test", response_class=HTMLResponse)
-def settings_mail_test(request: Request):
-    error = mail.send_test()
+async def settings_mail_test(request: Request):
+    """Кнопка стоит в форме почты: сначала сохраняем то, что в полях, потом шлём."""
+    error = _save_settings(await request.form()) or mail.send_test()
     if error:
         return _settings_page(request, error, error=True)
     return _settings_page(request, f"Пробное письмо ушло на {config.get('smtp_to')}.")

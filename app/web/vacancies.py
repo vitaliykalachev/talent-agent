@@ -35,14 +35,25 @@ def _vacancy(s, vacancy_id: int) -> Vacancy:
     return v
 
 
-def _number(value) -> float | None:
-    """Число из поля формы; пусто или не число — None; «inf», «1e999» — ответ 400."""
+# Потолки полей: больше — ошибка ввода, а не условие (иначе карточка вакансии падает).
+LIMITS = {
+    "min_years": (60, "Стаж — не больше 60 лет."),
+    "max_salary": (100_000_000, "Зарплата — не больше 100 000 000 ₽."),
+    "top_n": (500, "Сколько кандидатов показать — не больше 500."),
+}
+
+
+def _number(value, field: str | None = None) -> float | None:
+    """Число из поля формы; пусто или не число — None; «inf», «1e999» и больше потолка
+    поля — ответ 400 с русским текстом."""
     try:
         number = float(str(value).replace(" ", "").replace("\xa0", "").replace(",", "."))
     except ValueError:
         return None
     if not math.isfinite(number):
         raise HTTPException(400, "Укажите обычное число, например 3 или 150 000.")
+    if field in LIMITS and number > LIMITS[field][0]:
+        raise HTTPException(400, LIMITS[field][1])
     return number
 
 
@@ -50,14 +61,15 @@ def _candidate_id(form) -> int | None:
     value = str(form.get("candidate_id", "")).strip()
     if not value:
         return None
-    if not value.isdigit():
+    if not value.isdigit() or len(value) > 12:
         raise HTTPException(400, "Не понял, о каком кандидате речь: обновите страницу.")
     return int(value)
 
 
 def _filters(form) -> dict:
     """Жёсткие условия из формы: пустое поле — условия нет."""
-    years, salary = _number(form.get("min_years", "")), _number(form.get("max_salary", ""))
+    years = _number(form.get("min_years", ""), "min_years")
+    salary = _number(form.get("max_salary", ""), "max_salary")
     found = {
         "city": str(form.get("city", "")).strip(),
         "min_years": years if years is not None and years >= 0 else None,
@@ -68,8 +80,8 @@ def _filters(form) -> dict:
 
 
 def _top_n(form, default: int = 40) -> int:
-    n = _number(form.get("top_n", ""))
-    return min(max(int(n), 1), 200) if n is not None and n == n else default
+    n = _number(form.get("top_n", ""), "top_n")
+    return max(int(n), 1) if n is not None else default
 
 
 def _live_job(s, v: Vacancy) -> Job | None:
