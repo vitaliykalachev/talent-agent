@@ -47,7 +47,10 @@ def runs(session, found: dict[str, Vacancy]) -> dict[str, Run]:
         scores = {}
         for qid, v in found.items():
             order = ev.pool(session, v, mode)
-            scores[qid] = {ext[cid]: 1.0 / place for place, cid in enumerate(order, start=1)}
+            # у возможного дубля демо тот же ID из CRM: это один человек, он занимает одно
+            # место в выдаче — по первой записи
+            people = list(dict.fromkeys(ext[cid] for cid in order))
+            scores[qid] = {person: 1.0 / place for place, person in enumerate(people, start=1)}
         result[mode] = Run(scores, name=mode)
     return result
 

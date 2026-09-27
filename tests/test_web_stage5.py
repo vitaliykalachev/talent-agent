@@ -37,6 +37,21 @@ def test_1_broken_zip_answers_400(client):
     assert r.status_code == 400 and "Архив «resumes.zip» не открылся" in r.text
 
 
+def test_1_zip_with_broken_file_inside_answers_400(client):
+    """Оглавление архива целое, файл внутри битый (контрольная сумма) — не 500."""
+    import io
+    import zipfile
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED) as z:
+        z.writestr("ivanov.txt", "Иванов Иван, технолог литейного производства")
+    data = bytearray(buf.getvalue())
+    at = data.index("Иванов".encode())
+    data[at] ^= 0xFF  # портим байт содержимого: CRC не сойдётся
+    r = upload(client, "resumes.zip", bytes(data), field="resumes")
+    assert r.status_code == 400 and "Архив «resumes.zip» не открылся" in r.text
+
+
 # ── №2 и №11: колонки, метки, «Что получится» ──────────────────────────────
 
 
@@ -76,7 +91,7 @@ def test_11_nameless_rows_warned_and_can_be_skipped(client):
     r = upload(client, "noname.csv", csv)
     batch = r.headers["location"]
     page = client.get(batch).text
-    assert "В 2\xa0строках нет ФИО — загрузим как «Без имени»?" in page
+    assert "В 2\xa0строках нет ФИО — агент загрузит как «Без имени»?" in page
     fields = re.findall(r'name="(col_\d+)"', page)
     form = dict(zip(fields, ["phone", "city"], strict=True))
     client.post(batch + "/start", data={**form, "nameless": "skip"})

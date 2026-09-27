@@ -9,7 +9,7 @@
   </ul>
   {% if o.nameless %}
   <fieldset class="choose">
-    <legend>В {{ o.nameless|count("строке", "строках", "строках") }} нет ФИО — загрузим как «Без имени»?</legend>
+    <legend>В {{ o.nameless|count("строке", "строках", "строках") }} нет ФИО — агент загрузит как «Без имени»?</legend>
     <label><input type="radio" name="nameless" value="keep" checked> Да, загрузить как «Без имени»</label>
     <label><input type="radio" name="nameless" value="skip"> Нет, пропустить эти строки</label>
   </fieldset>

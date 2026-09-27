@@ -1,3 +1,5 @@
+import json
+import re
 import time
 
 import pytest
@@ -8,6 +10,7 @@ from app import config, db, demo, morning
 from app.demo import generate
 from app.main import create_app
 from app.models import Candidate, Duplicate, Embedding, Match, NightRun, Vacancy
+from app.parse import CandidateProfile, to_parsed
 
 
 def test_demo_set_imports_as_300_candidates_with_duplicates_and_stale(tmp_path, do_import, session):
@@ -59,9 +62,51 @@ def test_make_demo_works_without_key(tmp_path, monkeypatch):
     assert first["title"] == "Новые кандидаты по вакансиям"
     assert first["rows"][0]["link"] == f"/vacancies/{v.id}/results"
     assert "подход" in first["rows"][0]["text"]
+    assert parsed == 303  # демо к показу: у каждой записи есть записанный разбор
     with TestClient(create_app(tmp_path / "demo")) as web:
-        for url in ("/", "/morning", "/vacancies", f"/vacancies/{v.id}/results", "/duplicates"):
-            assert web.get(url).status_code == 200, url
+        for url in ("/", "/morning", "/vacancies", f"/vacancies/{v.id}/results"):
+            text = web.get(url).text.lower()
+            for word in ("не получилось", "не удалось оценить", "есть проблемы"):
+                assert word not in text, (url, word)
+        queue = web.get("/duplicates").text
+        assert "Похоже на дубль: " in queue and "Похоже на дубль: 0" not in queue
+
+
+YEARS_RE = re.compile(r"(?<![\d.,])(\d{1,2})(?:[.,]\d)?(?:\s*-\s*|\s+)(?:летн\w*|лет|года?)\b")
+LATIN_RE = re.compile(r"[A-Za-z][A-Za-z0-9+#]*")
+# Названия продуктов и принятые сокращения, которые и по-русски пишут латиницей
+PRODUCTS = {"ERP", "CRM", "WMS", "CAD", "IT", "B2B", "FMCG", "DevOps", "Data", "Science", "TPM"}
+
+
+@pytest.fixture
+def recorded_profiles(tmp_path, do_import, session):
+    """Демо-база и то, что из записанного ответа модели сделает разбор: (кандидат, parsed).
+    Каждой активной записи демо есть записанный разбор — демо не показывает сбоев."""
+    table, resumes = generate(tmp_path / "demo", today=demo.RECORDED_ON)
+    do_import(table, [resumes])
+    answers = {
+        a["match"]: a["response"]
+        for a in json.loads((demo.RECORDED / "parse.json").read_text("utf-8"))
+    }
+    found = []
+    for c in session.scalars(select(Candidate).where(Candidate.duplicate_of.is_(None))):
+        response = answers[f"ID: {c.external_id}\n"]
+        found.append((c, to_parsed(CandidateProfile.model_validate(response), c)))
+    return found
+
+
+def test_demo_summary_years_match_dates(recorded_profiles):
+    """«Кратко»: число лет не дальше 2 от стажа, который код считает по датам мест работы."""
+    for c, p in recorded_profiles:
+        for m in YEARS_RE.finditer(p["summary"] or ""):
+            assert abs(int(m.group(1)) - p["total_years"]) <= 2, (c.external_id, p["summary"])
+
+
+def test_demo_summary_has_no_latin_except_products(recorded_profiles):
+    for c, p in recorded_profiles:
+        text = c.raw_text.lower()
+        for word in LATIN_RE.findall(p["summary"] or ""):
+            assert word in PRODUCTS or word.lower() in text, (c.external_id, word, p["summary"])
 
 
 def test_key_file_not_copied_into_image():

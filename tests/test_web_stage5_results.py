@@ -203,6 +203,16 @@ def test_15_settings_check_uses_typed_fields_and_names_the_cause(web, session):
     assert "Ключ удалён." in text and not config.get("llm_api_key")
 
 
+def test_15_key_delete_warns_when_key_comes_from_env(web, session, monkeypatch):
+    from app import config
+
+    config.save({"llm_api_key": "из-настроек"})
+    monkeypatch.setenv("LLM_API_KEY", "из-env")
+    text = web.post("/settings/key-delete").text
+    assert "Ключ из настроек удалён, но приложение берёт ключ из файла .env" in text
+    assert "Ключ удалён." not in text
+
+
 def test_15_mail_error_in_plain_russian():
     import smtplib
     import socket

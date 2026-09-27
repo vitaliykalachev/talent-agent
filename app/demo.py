@@ -834,12 +834,16 @@ def generate(out: Path, seed: int = 42, today: date | None = None) -> tuple[Path
     # Возможные дубли: то же ФИО, город и дата рождения, но телефон и почта другие. Сами
     # не склеиваются, попадают в очередь «Похоже на дубль». Свой генератор и конец
     # таблицы — остальная демо-база (и разметка eval/) от них не меняется.
+    # Запись — копия строки выгрузки с тем же ID: обезличенный текст тот же, и записанный
+    # ответ модели на оригинал подходит и ей, без нового запроса. Берутся люди со строкой
+    # целиком в выгрузке (файл, связанный по ID, с двумя строками не связать) и не из
+    # производства — в оценку демо-вакансии они не попадают, её ответы записаны заранее.
     extra = random.Random(seed + 1)
-    for p in extra.sample([p for p in fresh_people if p["where"] != "txt"], POSSIBLE):
-        ext_id += extra.randint(1, 7)
+    twins = [p for p in fresh_people if p["where"] == "csv" and p["prof"] != "производство"]
+    for p in extra.sample(twins, POSSIBLE):
         rows.append(
             {
-                "ID": str(ext_id),
+                "ID": p["ext_id"],
                 "ФИО": f"{p['last']} {p['first']} {p['middle']}",
                 "Телефон": _fmt_phone(_phone(extra, phones), 0),
                 "E-mail": _email(extra, p, emails),
@@ -847,11 +851,10 @@ def generate(out: Path, seed: int = 42, today: date | None = None) -> tuple[Path
                 "Должность": p["title"],
                 "Компания": p["company"],
                 "Дата рождения": p["birth"].strftime("%d.%m.%Y"),
-                "Дата обновления": (p["updated"] - timedelta(days=200)).strftime("%d.%m.%Y"),
+                "Дата обновления": (p["updated"] - timedelta(days=30)).strftime("%d.%m.%Y"),
                 "Резюме": p["text"],
             }
         )
-        answers.append({"match": f"ID: {ext_id}\n", "response": recorded_answer(p, p["facts"])})
 
     table = out / "crm_export.csv"
     with table.open("w", encoding="utf-8-sig", newline="") as f:
