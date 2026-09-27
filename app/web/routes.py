@@ -6,6 +6,7 @@ import re
 import tempfile
 import time
 import zipfile
+import zlib
 from datetime import date
 from pathlib import Path
 
@@ -224,6 +225,16 @@ def _upload_error(request: Request, error: str) -> HTMLResponse:
     return render(request, "upload.html", status_code=400, batches=batches, offer=None, error=error)
 
 
+def _zip_ok(path: Path) -> bool:
+    """Архив открывается и каждый файл внутри читается: оглавление может быть целым,
+    а файл внутри — битым (ошибка контрольной суммы)."""
+    try:
+        with zipfile.ZipFile(path) as z:
+            return z.testzip() is None
+    except (zipfile.BadZipFile, OSError, EOFError, NotImplementedError, RuntimeError, zlib.error):
+        return False
+
+
 def broken_file(table: Path | None, docs: list[Path]) -> str | None:
     """Текст ошибки, если выгрузка или архив не открываются; None — всё читается.
     Проверка идёт до создания загрузки, чтобы битый файл не оставлял пустую загрузку."""
@@ -240,7 +251,7 @@ def broken_file(table: Path | None, docs: list[Path]) -> str | None:
                 f"В файле «{table.name}» нет строк с данными. Проверьте, что выгрузили нужный лист."
             )
     for path in docs:
-        if path.suffix.lower() == ".zip" and not zipfile.is_zipfile(path):
+        if path.suffix.lower() == ".zip" and not _zip_ok(path):
             return (
                 f"Архив «{path.name}» не открылся: он повреждён или это не ZIP. "
                 "Упакуйте резюме заново и загрузите ещё раз."
@@ -819,6 +830,11 @@ async def settings_check(request: Request):
 def settings_key_delete(request: Request):
     """«Удалить ключ»: пустое поле ключ не стирает, поэтому отдельная кнопка."""
     config.save({"llm_api_key": ""})
+    if config.get("llm_api_key"):  # пустое значение в «Настройках» уступает переменной из .env
+        message = (
+            "Ключ из настроек удалён, но приложение берёт ключ из файла .env — уберите его оттуда."
+        )
+        return _settings_page(request, message, error=True)
     return _settings_page(request, "Ключ удалён.")
 
 

@@ -203,6 +203,16 @@ def test_15_settings_check_uses_typed_fields_and_names_the_cause(web, session):
     assert "Ключ удалён." in text and not config.get("llm_api_key")
 
 
+def test_15_key_delete_warns_when_key_comes_from_env(web, session, monkeypatch):
+    from app import config
+
+    config.save({"llm_api_key": "из-настроек"})
+    monkeypatch.setenv("LLM_API_KEY", "из-env")
+    text = web.post("/settings/key-delete").text
+    assert "Ключ из настроек удалён, но приложение берёт ключ из файла .env" in text
+    assert "Ключ удалён." not in text
+
+
 def test_15_mail_error_in_plain_russian():
     import smtplib
     import socket
@@ -214,6 +224,16 @@ def test_15_mail_error_in_plain_russian():
     assert "логин или пароль" in _error(smtplib.SMTPAuthenticationError(535, b"no"))
     for exc in (socket.gaierror(8, "x"), OSError("x"), TimeoutError()):
         assert "gaierror" not in _error(exc) and "Error" not in _error(exc)
+
+
+def test_23_same_crm_id_is_the_first_reason(web, namesakes, session):  # noqa: F811
+    a = session.get(Candidate, namesakes.candidate_a)
+    b = session.get(Candidate, namesakes.candidate_b)
+    assert "тот же ID в CRM" not in web.get(f"/duplicates/{namesakes.id}").text
+    b.external_id = a.external_id
+    session.commit()
+    text = web.get(f"/duplicates/{namesakes.id}").text
+    assert "Почему похожи: тот же ID в CRM, то же ФИО" in text
 
 
 def test_25_vacancies_list_counts_failures(web, session):

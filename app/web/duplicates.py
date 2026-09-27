@@ -27,6 +27,8 @@ def compare(a: Candidate, b: Candidate) -> tuple[set[str], str]:
     """Какие поля совпали (их подсвечиваем) и причина словами: «то же ФИО, тот же город,
     год рождения 1984 у обоих, телефоны разные»."""
     same, words = set(), []
+    if a.external_id and a.external_id == b.external_id:
+        words.append("тот же ID в CRM")
     if a.full_name and b.full_name and names_compatible(a.full_name, b.full_name):
         same.add("full_name")
         exact = _norm_name(a.full_name) == _norm_name(b.full_name)
