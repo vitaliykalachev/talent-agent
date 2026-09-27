@@ -5,7 +5,7 @@
 {% if live %}
 <div class="card">
   {% set pct = (100 * live.progress // live.total) if live.total else 0 %}
-  <h4>{% if live.kind == "parse" %}Разбираем резюме{% else %}Считаем смысловые отпечатки{% endif %}: {{ live.progress|num }} из {{ live.total|num }}{% if live.status == "paused" %} — приостановлено{% endif %}</h4>
+  <h4>{% if live.kind == "parse" %}Агент разбирает резюме{% else %}Агент считает смысловые отпечатки{% endif %}: {{ live.progress|num }} из {{ live.total|num }}{% if live.status == "paused" %} — приостановлено{% endif %}</h4>
   <div class="bar-track"><div class="bar-fill" style="width:{{ pct }}%"></div></div>
   {% if live.status != "paused" %}<p>{{ remaining(live) }}</p>{% endif %}
   <ul class="stages">

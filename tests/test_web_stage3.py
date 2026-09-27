@@ -176,7 +176,10 @@ def test_wrong_reason_writes_feedback_with_undo_and_memory(web, session, base, m
     f = session.scalar(select(Feedback))
     assert (f.kind, f.scope, f.vacancy_id, f.target) == ("not_in_resume", "vacancy", v.id, "reason")
     text = page(web, r.headers["location"])
-    assert "Учтём в вакансии «Начальник цеха литья»: при следующей оценке пересчитаем 1" in text
+    assert (
+        "Агент учтёт это в вакансии «Начальник цеха литья»: при следующей оценке пересчитает 1"
+        in text
+    )
     assert "Отменить" in text
     memory = page(web, f"/vacancies/{v.id}")
     assert "«Бережливое производство» — этого нет в резюме" in memory

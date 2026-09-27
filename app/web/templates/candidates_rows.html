@@ -2,11 +2,11 @@
 <div class="callout"><p>В базе пока никого. <a class="button" href="/upload">Загрузить базу</a></p></div>
 {% else %}
 {% if r.mode == "meaning" %}
-<p class="searching">Ищем по смыслу: «{{ q }}»{% if r.searched < r.base %} · <small>ищем среди {{ r.searched|num }} разобранных из {{ r.base|num }}</small>{% endif %}</p>
+<p class="searching">Агент ищет по смыслу: «{{ q }}»{% if r.searched < r.base %} · <small>среди {{ r.searched|num }} разобранных из {{ r.base|num }}</small>{% endif %}</p>
 {% elif r.mode == "contacts" %}
-<p class="searching">Ищем по контактам: «{{ q }}»</p>
+<p class="searching">Агент ищет по контактам: «{{ q }}»</p>
 {% elif r.mode == "words" %}
-<p class="searching">Ищем по словам: «{{ q }}» · <small>поиск по смыслу заработает после разбора резюме</small></p>
+<p class="searching">Агент ищет по словам: «{{ q }}» · <small>поиск по смыслу заработает после разбора резюме</small></p>
 {% endif %}
 
 {% if chips %}

@@ -139,7 +139,7 @@
 
 {% if toast %}
 <div class="toast" role="status">
-  <span>Учтём в вакансии «{{ v.title }}»: при следующей оценке пересчитаем {{ recount|count("кандидата", "кандидатов", "кандидатов") }}.</span>
+  <span>Агент учтёт это в вакансии «{{ v.title }}»: при следующей оценке пересчитает {{ recount|count("кандидата", "кандидатов", "кандидатов") }}.</span>
   <form method="post" action="/feedback/{{ toast.id }}/delete" class="inline">
     <input type="hidden" name="back" value="/vacancies/{{ v.id }}/results{% if toast.candidate_id %}#c{{ toast.candidate_id }}{% endif %}">
     <button class="button ghost" type="submit">Отменить</button>

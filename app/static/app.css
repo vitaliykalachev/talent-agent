@@ -318,6 +318,8 @@ table.hits tbody tr{background:none}
 .field-error{color:var(--red);font-size:14px;margin:0;flex-basis:100%}
 [aria-invalid=true]{border-color:var(--red)}
 label.off{color:var(--ink-mute)}
+details.admin{margin-top:18px;border-top:1px solid var(--line-soft);padding-top:12px}
+details.admin summary{cursor:pointer;color:var(--accent);font-weight:600;margin-bottom:10px}
 a.wrong{font-size:13px;margin-left:6px;color:var(--ink-mute);text-decoration:underline dotted}
 form.wrong-form{display:flex;flex-direction:column;gap:4px;margin:6px 0;padding:8px;border:1px solid var(--line);border-radius:var(--radius);background:var(--bg-soft)}
 @media (max-width:820px){

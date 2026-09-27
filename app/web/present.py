@@ -171,7 +171,7 @@ def remaining(job: Job) -> str:
     """Остаток по скорости за последние 10–15 минут; первые две минуты — «считаем»."""
     ticks = [t for t in job.payload.get("ticks", []) if time.time() - t[0] <= 15 * 60]
     if len(ticks) < 2 or ticks[-1][0] - ticks[0][0] < 120 or ticks[-1][1] <= ticks[0][1]:
-        return "Считаем, сколько займёт…"
+        return "Агент считает, сколько займёт…"
     rate = (ticks[-1][1] - ticks[0][1]) / (ticks[-1][0] - ticks[0][0])
     left = (job.total - job.progress) / rate
     return f"Осталось {duration(left * 0.85, left * 1.2)}"

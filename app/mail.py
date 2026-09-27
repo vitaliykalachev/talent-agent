@@ -6,6 +6,7 @@
 """
 
 import smtplib
+import socket
 import ssl
 from email.message import EmailMessage
 
@@ -41,9 +42,18 @@ def _send(subject: str, body: str) -> None:
 
 
 def _error(exc: Exception) -> str:
+    """Причина по-русски, без имён исключений: рекрутёру «gaierror» ничего не говорит."""
     if isinstance(exc, smtplib.SMTPAuthenticationError):
         return "почтовый сервер не принял логин или пароль"
-    return f"почтовый сервер не ответил ({type(exc).__name__})"
+    if isinstance(exc, socket.gaierror):
+        return "почтовый сервер с таким адресом не найден, проверьте поле «Почтовый сервер»"
+    if isinstance(exc, ConnectionRefusedError):
+        return "почтовый сервер не принимает соединения на этом порту, проверьте поле «Порт»"
+    if isinstance(exc, (TimeoutError, socket.timeout)):
+        return "почтовый сервер не ответил вовремя, проверьте адрес и порт"
+    if isinstance(exc, smtplib.SMTPRecipientsRefused):
+        return "почтовый сервер не принял адрес получателя"
+    return "почтовый сервер не ответил, проверьте адрес и порт"
 
 
 def send_test() -> str | None:

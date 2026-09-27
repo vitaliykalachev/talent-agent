@@ -51,8 +51,8 @@ def test_11_columns_step_labels_outcome_and_button(client):
     text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", page))
     assert "совпадает" in text and "не понял — выберите" in text
     assert "Что получится" in text
-    assert "Загрузим 3 кандидатов" in text  # винительный: «трёх кандидатов»
-    assert "Точных дублей объединим: 1" in text  # Иванов И.П. с тем же телефоном
+    assert "Агент загрузит 3 кандидатов" in text  # винительный: «трёх кандидатов»
+    assert "Точные дубли агент объединит сам: 1" in text  # Иванов И.П. с тем же телефоном
     assert "Загрузить 3 кандидатов" in text
     assert "Начать разбор" not in text  # кнопка обещает ровно то, что случится
 
@@ -63,7 +63,7 @@ def test_11_outcome_recounts_when_column_changes(client):
     # ФИО, телефон и почту «не использовать» — связать строки не с кем
     form = {f"col_{i}": "" for i in range(7)}
     part = client.post(batch + "/preview", data=form).text
-    assert "Пропустим 3\xa0строки" in part and "Загружать нечего" in part
+    assert "Агент пропустит 3\xa0строки" in part and "Загружать нечего" in part
 
 
 def test_11_empty_csv_is_an_error_not_zero_rows(client):

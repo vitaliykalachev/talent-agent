@@ -33,7 +33,7 @@
 <form class="card" method="post" action="/duplicates/{{ dup.id }}/merge">
   {% if choices %}
   <h4>Что оставить в объединённой записи</h4>
-  <p>По умолчанию берём значения из более свежей записи. Телефоны и почта складываются.</p>
+  <p>По умолчанию агент берёт значения из более свежей записи. Телефоны и почта складываются.</p>
   {% for field, label in choices %}
   <fieldset class="choose">
     <legend>{{ label }}</legend>

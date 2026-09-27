@@ -1,5 +1,6 @@
 """Экраны раздела 2 плана: главная, загрузка, кандидаты, карточка, настройки."""
 
+import asyncio
 import math
 import re
 import tempfile
@@ -721,8 +722,12 @@ def _memory() -> list:
         ).all()
 
 
-def _settings_page(request: Request, message: str | None = None, error: bool = False):
-    values = {key: config.get(key) for key in SETTING_FIELDS}
+def _settings_page(
+    request: Request, message: str | None = None, error: bool = False, typed: dict | None = None
+):
+    """`typed` — несохранённые значения из формы: после проверки подключения они остаются
+    в полях, а не заменяются сохранёнными."""
+    values = {key: (typed or {}).get(key) or config.get(key) for key in SETTING_FIELDS}
     return render(
         request,
         "settings.html",
@@ -771,21 +776,50 @@ def _save_settings(form) -> str | None:
     return None
 
 
+CHECK_TIMEOUT = 10  # секунд на «Проверить подключение»: одна попытка, без повторов
+CHECKED = ("llm_provider", "llm_base_url", "llm_api_key", "llm_model_parse")
+NO_ADDRESS = (
+    "Адрес сервиса не отвечает за 10 секунд. Проверьте поле «Адрес сервиса», "
+    "например https://api.claudehub.fun."
+)
+
+
 @router.post("/settings/check", response_class=HTMLResponse)
-def settings_check(request: Request):
+async def settings_check(request: Request):
+    """Проверяет то, что сейчас в полях формы, без сохранения: ключ из поля, а если
+    поле пустое — сохранённый."""
+    form = await request.form()
+    typed = {key: str(form.get(key, "")).strip() for key in CHECKED}
+    provider = typed["llm_provider"] or config.get("llm_provider")
+    if provider != "mock" and not (typed["llm_api_key"] or config.get("llm_api_key")):
+        message = "Ключ доступа не задан: вставьте его в поле «Ключ доступа» и проверьте ещё раз."
+        return _settings_page(request, message, error=True, typed=typed)
     started = time.monotonic()
     try:
-        get_llm("parse").complete_structured(
-            Ping, "Проверка связи. Ответь ok = true.", "Проверка связи: ответь ok = true."
+        llm = get_llm("parse", typed, timeout=CHECK_TIMEOUT)
+        llm.retries = 0
+        await asyncio.to_thread(
+            llm.complete_structured,
+            Ping,
+            "Проверка связи. Ответь ok = true.",
+            "Проверка связи: ответь ok = true.",
         )
     except AuthError as exc:
-        return _settings_page(request, f"Не получилось: {exc}", error=True)
+        return _settings_page(request, str(exc), error=True, typed=typed)
     except Exception:  # адрес не тот, сервис недоступен или отвечает не то
-        return _settings_page(
-            request, "Адрес сервиса не отвечает, проверьте его в Настройках.", error=True
-        )
+        return _settings_page(request, NO_ADDRESS, error=True, typed=typed)
     seconds = f"{time.monotonic() - started:.1f}".replace(".", ",")
-    return _settings_page(request, f"Подключение работает: ответ за {seconds} с.")
+    message = f"Подключение работает: ответ за {seconds} с."
+    if typed["llm_api_key"] or any(typed[k] != config.get(k) for k in CHECKED if typed[k]):
+        message += " Нажмите «Сохранить», чтобы агент работал с этими настройками."
+    return _settings_page(request, message, typed=typed)
+
+
+@router.post("/settings/key-delete", response_class=HTMLResponse)
+def settings_key_delete(request: Request):
+    """«Удалить ключ»: пустое поле ключ не стирает, поэтому отдельная кнопка."""
+    config.save({"llm_api_key": ""})
+    return _settings_page(request, "Ключ удалён.")
 
 
 @router.post("/settings/mail-test", response_class=HTMLResponse)

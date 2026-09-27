@@ -22,6 +22,16 @@
     <label for="llm_api_key">Ключ доступа</label>
     <input id="llm_api_key" type="password" name="llm_api_key" autocomplete="off" placeholder="{{ 'Ключ задан. Оставьте пустым, чтобы не менять' if has_key else 'Вставьте ключ' }}">
   </div>
+  <div class="actions">
+    <button class="button" type="submit">Сохранить</button>
+    <button class="button ghost" type="submit" formaction="/settings/check"
+            hx-post="/settings/check" hx-target="main" hx-select="main" hx-swap="outerHTML"
+            hx-disabled-elt="this"><span class="idle">Проверить подключение</span><span class="busy">Проверяем, до 10 секунд…</span></button>
+    {% if has_key %}<button class="button ghost" type="submit" formaction="/settings/key-delete" formnovalidate>Удалить ключ</button>{% endif %}
+  </div>
+
+  <details class="admin">
+  <summary>Для администратора: модели, цены, поиск</summary>
   <div class="field">
     <label for="llm_model_parse">Модель для разбора резюме</label>
     <input id="llm_model_parse" type="text" name="llm_model_parse" value="{{ values.llm_model_parse }}">
@@ -32,7 +42,7 @@
   </div>
 
   <h4>Цены сервиса, $ за миллион единиц текста</h4>
-  <p><small>Как в прайсе сервиса: отдельно за текст, который уходит модели, и за ответ. По ним считаем примерную стоимость разбора до старта.</small></p>
+  <p><small>Как в прайсе сервиса: отдельно за текст, который уходит модели, и за ответ. По ним агент до старта считает примерную стоимость разбора.</small></p>
   <div class="prices">
     <div class="field"><label for="price_parse_in">Разбор: отправка</label><input id="price_parse_in" type="text" name="price_parse_in" value="{{ values.price_parse_in }}"></div>
     <div class="field"><label for="price_parse_out">Разбор: ответ</label><input id="price_parse_out" type="text" name="price_parse_out" value="{{ values.price_parse_out }}"></div>
@@ -48,10 +58,7 @@
     <small>Работает на этом компьютере, резюме никуда не уходят. После смены модели база пересчитается сама.</small>
   </div>
   <button class="button" type="submit">Сохранить</button>
-</form>
-
-<form method="post" action="/settings/check">
-  <button class="button ghost" type="submit">Проверить подключение</button>
+  </details>
 </form>
 
 <form class="card settings" method="post" action="/settings" id="night">
@@ -71,7 +78,7 @@
 
 <form class="card settings" method="post" action="/settings" id="mail">
   <h4>Почта для отчёта</h4>
-  <p>После ночного прогона пришлём письмо: сколько кандидатов подходят по каждой вакансии и что нужно решить. Имён и контактов кандидатов в письме нет. Не заполните — отчёт будет только на экране «Утро».</p>
+  <p>После ночного прогона агент пришлёт письмо: сколько кандидатов подходят по каждой вакансии и что нужно решить. Имён и контактов кандидатов в письме нет. Не заполните — отчёт будет только на экране «Утро».</p>
   <div class="prices">
     <div class="field"><label for="smtp_host">Почтовый сервер</label><input id="smtp_host" type="text" name="smtp_host" value="{{ values.smtp_host }}" placeholder="smtp.yandex.ru"></div>
     <div class="field"><label for="smtp_port">Порт</label><input id="smtp_port" type="text" inputmode="numeric" name="smtp_port" value="{{ values.smtp_port }}"></div>

@@ -172,6 +172,50 @@ def test_23_merge_shows_line_with_undo(web, namesakes, session):  # noqa: F811
     assert back.headers["location"] == f"/duplicates/{namesakes.id}"
 
 
+def test_15_settings_check_uses_typed_fields_and_names_the_cause(web, session):
+    import time
+
+    from app import config
+
+    page = web.get("/settings").text
+    form = page[page.index('<form class="card settings" method="post" action="/settings">') :]
+    form = form[: form.index("</form>")]
+    assert 'formaction="/settings/check"' in form  # проверка внутри формы, с её полями
+    assert '<details class="admin">' in form and "Модель для разбора резюме" in form
+    text = web.post("/settings/check", data={"llm_provider": "anthropic"}).text
+    assert "Ключ доступа не задан" in text and "Адрес сервиса не отвечает" not in text
+    started = time.monotonic()
+    text = web.post(
+        "/settings/check",
+        data={
+            "llm_provider": "anthropic",
+            "llm_base_url": "http://127.0.0.1:9",
+            "llm_api_key": "проверочный",
+        },
+    ).text
+    assert time.monotonic() - started < 10
+    assert "Адрес сервиса не отвечает за 10 секунд" in text
+    assert 'value="http://127.0.0.1:9"' in text  # введённый адрес остался в поле
+    assert not config.get("llm_api_key")  # проверка ничего не сохраняет
+    config.save({"llm_api_key": "старый"})
+    assert "Удалить ключ" in web.get("/settings").text
+    text = web.post("/settings/key-delete").text
+    assert "Ключ удалён." in text and not config.get("llm_api_key")
+
+
+def test_15_mail_error_in_plain_russian():
+    import smtplib
+    import socket
+
+    from app.mail import _error
+
+    assert "не найден" in _error(socket.gaierror(8, "nodename nor servname provided"))
+    assert "порту" in _error(ConnectionRefusedError())
+    assert "логин или пароль" in _error(smtplib.SMTPAuthenticationError(535, b"no"))
+    for exc in (socket.gaierror(8, "x"), OSError("x"), TimeoutError()):
+        assert "gaierror" not in _error(exc) and "Error" not in _error(exc)
+
+
 def test_25_vacancies_list_counts_failures(web, session):
     v = Vacancy(title="Технолог", description="технолог литья")
     c = Candidate(full_name="Громов Илья", raw_text="Технолог")
