@@ -42,6 +42,8 @@ templates.env.filters["years"] = present.years
 templates.env.filters["phone"] = present.phone
 templates.env.filters["cut"] = present.cut
 templates.env.filters["import_done"] = present.import_done
+templates.env.filters["settings_hint"] = present.settings_hint
+templates.env.globals["reasons"] = present.reasons
 templates.env.globals["network_errors"] = present.network_errors
 templates.env.globals["PARSE_STATUS"] = present.PARSE_STATUS
 templates.env.globals["problem_summary"] = present.problem_summary
@@ -58,7 +60,7 @@ def headline(raw_text: str) -> str:
     lines = [ln.strip(" #*_\t") for ln in (raw_text or "").splitlines() if ln.strip(" #*_\t")]
     for line in lines:
         if match := POSITION_RE.match(line):
-            return match.group(1)[:100]
+            return present.cut(match.group(1), 100)
     for line in lines[:6]:
         if ":" not in line and not looks_like_name(line) and len(line) < 100:
             return line
@@ -119,12 +121,21 @@ def pipeline(s) -> dict:
 
 
 def parse_offer(s) -> dict:
+    """Предложение разобрать резюме; после пробного разбора — ссылка на его список."""
     count = lambda *w: s.scalar(select(func.count(Candidate.id)).where(active(), *w))  # noqa: E731
+    last = latest(s, "parse")
+    trial = last if last and last.status == "done" and last.payload.get("trial") else None
     return {
         "waiting": count(Candidate.parse_status == "new"),
         "parsed": count(Candidate.parse_status == "parsed"),
         "failed": count(Candidate.parse_status == "failed"),
         "trial": TRIAL,
+        "trial_job": trial.id if trial else None,
+        "trial_parsed": count(
+            Candidate.parse_status == "parsed", Candidate.id.in_(trial.payload["ids"])
+        )
+        if trial
+        else 0,
     }
 
 
@@ -170,6 +181,7 @@ def home(request: Request):
         running=importing,
         with_errors=with_errors,
         flow=flow,
+        has_key=bool(config.get("llm_api_key")) or config.get("llm_provider") == "mock",
     )
 
 
@@ -391,8 +403,29 @@ async def parse_start(request: Request):
     with db.SessionLocal() as s:
         ids = _scope_ids(s, scope, job_id)
         if ids:
-            parse.start_parse(s, ids)
+            job = parse.start_parse(s, ids)
+            if scope == "trial" and job.payload["ids"] == ids:  # новая задача, не дописка
+                job.payload = {**job.payload, "trial": True}
+                s.commit()
     return RedirectResponse("/", status_code=303)
+
+
+@router.get("/parse/trial", response_class=HTMLResponse)
+def parse_trial(request: Request, job: int):
+    """«Посмотреть 20 разобранных»: как агент понял резюме пробного разбора."""
+    with db.SessionLocal() as s:
+        found = s.get(Job, job)
+        if not found or found.kind != "parse":
+            raise HTTPException(404)
+        rows = list(
+            s.scalars(
+                select(Candidate)
+                .where(Candidate.id.in_(found.payload.get("ids", [])))
+                .order_by(Candidate.id)
+            )
+        )
+        offer = parse_offer(s)
+    return render(request, "parse_trial.html", rows=rows, offer=offer)
 
 
 @router.get("/parse/preview", response_class=HTMLResponse)

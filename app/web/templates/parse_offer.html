@@ -1,10 +1,17 @@
 {# Предложение разобрать резюме: пробные 20 при первом запуске, потом вся база. #}
 {% if offer and offer.waiting %}
 <div class="card offer">
-  <h4>Ждут разбора: {{ offer.waiting|num }} {{ "резюме" }}</h4>
+  <h4>Ждут разбора: {{ offer.waiting|count("резюме", "резюме", "резюме") }}</h4>
+  {% if offer.trial_job %}
+  <p>Пробный разбор готов: посмотрите, как агент понял {{ offer.trial_parsed|count("резюме", "резюме", "резюме") }}, и запускайте всю базу.</p>
+  {% else %}
   <p>Агент прочитает резюме и разложит их по полям: должности, навыки, стаж, зарплата, город. После этого заработает поиск по смыслу.</p>
+  {% endif %}
   <div class="actions">
-    {% if not offer.parsed %}
+    {% if offer.trial_job %}
+    <a class="button" href="/parse/trial?job={{ offer.trial_job }}">Посмотреть {{ offer.trial_parsed|count("разобранное", "разобранных", "разобранных") }}</a>
+    <a class="button ghost" href="/parse?scope=all">Начать разбор всей базы</a>
+    {% elif not offer.parsed %}
     <a class="button" href="/parse?scope=trial">Разобрать {{ [offer.trial, offer.waiting]|min }} для проверки</a>
     <a class="button ghost" href="/parse?scope=all">Начать разбор всей базы</a>
     {% else %}

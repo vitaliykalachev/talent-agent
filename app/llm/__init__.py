@@ -38,6 +38,7 @@ class AuthError(LLMError):
 
 AUTH_MESSAGE = "Ключ доступа не подошёл. Проверьте, что скопировали его целиком."
 BUSY_MESSAGE = "сервис ИИ не ответил"
+NO_ANSWER = "ответ модели не получен"  # у записанных ответов нет ответа на этот запрос
 
 
 class LLM:
@@ -268,8 +269,8 @@ class MockLLM(LLM):
             ]
             found.sort(key=lambda i: "schema" not in self.fixtures[i])
             index = found[0] if found else None
-            if index is None:
-                raise LLMError("нет записанного ответа")
+            if index is None:  # на экране — без служебных подробностей записи
+                raise LLMError(NO_ANSWER)
             fixture = self.fixtures[index]
             answers = fixture.get("responses") or [fixture["response"]]
             answer = answers[min(self.served[index], len(answers) - 1)]

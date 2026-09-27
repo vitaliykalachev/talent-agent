@@ -97,7 +97,7 @@ td.num,th.num{text-align:right;white-space:nowrap;font-variant-numeric:tabular-n
 .topbar nav a.on{color:#fff;border-bottom:2px solid #fff}
 
 /* ── Счётчики ────────────────────────── */
-.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:22px 0}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin:22px 0}
 .stat{border:1px solid var(--line);border-radius:var(--radius);padding:16px 18px;background:var(--bg)}
 .stat b{display:block;font-size:30px;line-height:1.1;font-variant-numeric:tabular-nums}
 .stat span{font-size:13px;color:var(--ink-soft)}
@@ -112,6 +112,7 @@ input[type=text],input[type=search],select{
 }
 input[type=search]{min-width:280px}
 input[type=file]{font-size:14px;max-width:100%}
+input[type=file]::file-selector-button{font:inherit;font-size:14px;font-weight:600;padding:8px 14px;margin-right:10px;border-radius:8px;border:1px solid var(--accent);background:var(--bg);color:var(--accent);cursor:pointer}
 .field{margin-bottom:16px}
 .button{
   display:inline-block;font:inherit;font-size:15px;font-weight:600;padding:9px 18px;border-radius:8px;
@@ -194,7 +195,8 @@ form.filters .grow input{width:100%}
   display:inline-flex;gap:6px;align-items:center;font-size:13.5px;padding:4px 10px;border-radius:20px;
   background:var(--accent-soft);color:var(--accent);text-decoration:none;
 }
-.frag{font-size:13.5px;color:var(--ink-soft);font-weight:400;margin-top:6px;line-height:1.5}
+tr.frag-row td.frag{font-size:13.5px;color:var(--ink-soft);line-height:1.5;padding-top:0;border-bottom:1px solid var(--line-soft)}
+tr.hit.with-frag td{border-bottom:none}
 mark{background:#fff1b8;color:inherit;border-radius:3px;padding:0 2px}
 mark:target{background:#ffd666;outline:2px solid var(--amber)}
 .none{color:var(--ink-mute);font-style:italic}
@@ -282,7 +284,7 @@ details.export fieldset{border:0;padding:0;margin:8px 0}
 .callout.small{padding:6px 10px;font-size:14px}
 .history{padding-left:18px}
 .toast{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:10;display:flex;flex-wrap:wrap;gap:12px;align-items:center;max-width:calc(100% - 32px);padding:10px 16px;border-radius:var(--radius);background:var(--ink);color:#fff;box-shadow:0 4px 20px rgba(0,0,0,.2)}
-.toast .button.ghost{color:#fff;border-color:#fff}
+.toast .button.ghost{background:transparent;color:#fff;border-color:#fff}
 /* Этап 4: пара дублей, «Утро», настройки ночи и почты */
 .pair{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin:18px 0}
 dl.facts dd.same{background:#fff1b8;border-radius:3px;padding:0 4px}
@@ -298,4 +300,27 @@ fieldset.choose legend{font-weight:600;font-size:14px;margin-bottom:4px}
 @media (max-width:820px){
   .pair{grid-template-columns:1fr}
   .morning ul.rows li{flex-direction:column;gap:2px}
+}
+/* Этап 5: полировка по аудиту интерфейса */
+.back{margin:20px 0 0}
+.back + h1{margin-top:8px}
+table.hits tbody tr{background:none}
+.outcome{margin:22px 0}
+.outcome ul{margin:0 0 12px}
+.outcome fieldset.choose{flex-direction:column;gap:2px}
+.notice-line{font-size:14px;color:var(--ink-soft);margin:10px 0 18px}
+@media (max-width:820px){
+  .stats{grid-template-columns:1fr 1fr}
+  table.hits tbody tr.hit.with-frag{border-bottom:none;border-radius:var(--radius) var(--radius) 0 0;margin-bottom:0;padding-bottom:4px}
+  table.hits tbody tr.frag-row{border-top:none;border-radius:0 0 var(--radius) var(--radius);padding-top:0}
+  table.hits td.frag{padding-bottom:0}
+  /* кнопки и ссылки-действия под палец: не ниже 44 px */
+  .button,details.fix summary,details.wrong summary,.x,.chip,.pager a,.tabs > label{
+    min-height:44px;display:inline-flex;align-items:center;
+  }
+  .x{min-width:44px;justify-content:center;font-size:22px}
+  .plate{padding-right:48px}
+  .plate .remove{top:0;right:0}
+  details.fix summary,details.wrong summary{font-size:15px;padding:0 6px}
+  details.wrong summary{color:var(--accent)}
 }

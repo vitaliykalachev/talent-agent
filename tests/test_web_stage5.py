@@ -3,6 +3,7 @@
 import re
 
 from sqlalchemy import func, select
+from test_parse import FIXTURES, five, sent  # noqa: F401 — фикстуры
 
 from app.importer.mapping import guess_mapping
 from app.jobs import run_pending
@@ -124,3 +125,62 @@ def test_10_all_files_broken_is_not_done(client, tmp_path):
         job = s.scalar(select(Job).where(Job.kind == "import"))
     assert "Не получилось" in client.get("/upload").text
     assert job.status == "done"
+
+
+# ── №9, №10, №17: разбор, главная и пустые экраны ─────────────────────────
+
+
+def test_9_trial_parse_offers_list_of_parsed_first(five, session, monkeypatch):  # noqa: F811
+    from fastapi.testclient import TestClient
+
+    from app.main import create_app
+    from app.web import routes
+
+    monkeypatch.setattr(routes, "TRIAL", 2)
+    web = TestClient(create_app())
+    web.post("/parse", data={"scope": "trial"})
+    run_pending()
+    home = web.get("/").text
+    look = home.index("Посмотреть 2\xa0разобранных")
+    assert look < home.index("Начать разбор всей базы")  # главная — посмотреть
+    job = session.scalar(select(Job).where(Job.kind == "parse"))
+    listing = web.get(f"/parse/trial?job={job.id}").text
+    rows = re.findall(r'<a href="/candidates/(\d+)">', listing)
+    assert len(rows) == 2
+    for header in ("Желаемая должность", "Последняя должность и компания", "Стаж"):
+        assert header in listing
+
+
+def test_10_parse_with_zero_success_says_not_done(five, session, tmp_path):  # noqa: F811
+    from fastapi.testclient import TestClient
+
+    from app import config
+    from app.main import create_app
+
+    folder = tmp_path / "no-answers"
+    folder.mkdir()
+    config.save({"llm_fixtures": str(folder)})
+    web = TestClient(create_app())
+    web.post("/parse", data={"scope": "all"})
+    run_pending()
+    card = web.get("/progress").text
+    assert "Разбор резюме: Не получилось" in card
+    assert "Не получилось: ни одно резюме не разобрано. Причина: ответ модели не получен." in card
+    assert "Сетевые сбои" not in card and "Готово" not in card
+
+
+def test_17_empty_base_screens_lead_to_upload(client):
+    home = client.get("/").text
+    assert "Загрузить базу" in home and 'href="/upload"' in home
+    assert "ключ доступа" in home and "Открыть настройки" in home
+    assert 'data-stat="candidates"' not in home  # без шести нулевых плиток
+    found = client.get("/candidates?q=технолог").text
+    assert "В базе пока никого." in found and "Никого не нашли" not in found
+
+
+def test_17_auth_error_links_to_settings():
+    from app.llm import AUTH_MESSAGE
+    from app.web.present import settings_hint
+
+    assert 'href="/settings"' in settings_hint(AUTH_MESSAGE)
+    assert "href" not in settings_hint("сервис ИИ не ответил")

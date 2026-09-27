@@ -24,7 +24,7 @@ from sqlalchemy import Text, cast, func, or_, select
 from sqlalchemy.orm import Session
 
 from app import db, embed
-from app.importer.normalize import EMAIL_RE, find_name, normalize_phone
+from app.importer.normalize import EMAIL_RE, extract_phones, find_name, normalize_phone
 from app.models import Candidate
 
 POOL = 200  # сколько лучших берётся из BM25 и из вектора
@@ -151,12 +151,8 @@ def rrf(*rankings: list[int], k: int = RRF_K) -> list[int]:
     return sorted(total, key=lambda cid: -total[cid])
 
 
-def hybrid(session: Session, query: str, mode: str = "hybrid") -> tuple[list[int], dict]:
-    """Кандидаты по запросу до фильтров и близость по вектору для каждого из них.
-
-    mode: hybrid — BM25 + вектор (по умолчанию), vector — только вектор, bm25 — только
-    BM25; два последних нужны набору проверки `eval/`.
-    """
+def _ranked(session: Session, query: str, mode: str = "hybrid"):
+    """Слитый список, близость по вектору и кандидаты, у которых есть слова запроса."""
     ids, matrix = embed.index()
     closeness_by_id: dict[int, float] = {}
     by_vector: list[int] = []
@@ -166,10 +162,26 @@ def hybrid(session: Session, query: str, mode: str = "hybrid") -> tuple[list[int
         by_vector = [int(ids[i]) for i in top]
         closeness_by_id = {int(i): float(s) for i, s in zip(ids, scores, strict=True)}
     by_words = lexical(session, query) if mode in ("hybrid", "bm25") else []
-    return rrf(by_vector, by_words), closeness_by_id
+    return rrf(by_vector, by_words), closeness_by_id, set(by_words)
 
 
-def looks_like_contact(query: str) -> str | None:
+def hybrid(session: Session, query: str, mode: str = "hybrid") -> tuple[list[int], dict]:
+    """Кандидаты по запросу до фильтров и близость по вектору для каждого из них.
+
+    mode: hybrid — BM25 + вектор (по умолчанию), vector — только вектор, bm25 — только
+    BM25; два последних нужны набору проверки `eval/`.
+    """
+    pool, scores, _ = _ranked(session, query, mode)
+    return pool, scores
+
+
+def _surname(word: str):
+    """Условие «фамилия — это слово»: ФИО начинается с него, «Никитина» не подходит."""
+    name = func.pylower(Candidate.full_name)
+    return or_(name == word, name.like(f"{word} %"))
+
+
+def looks_like_contact(query: str, session: Session | None = None) -> str | None:
     q = query.strip()
     if EMAIL_RE.fullmatch(q):
         return "email"
@@ -177,6 +189,11 @@ def looks_like_contact(query: str) -> str | None:
         return "phone"
     if 2 <= len(q.split()) <= 3 and find_name(q.title(), lines=1):
         return "name"
+    word = q.lower()
+    if session is not None and re.fullmatch(r"[а-яёa-z-]{2,}", word):
+        # одно слово, и в базе есть такая фамилия — ищем человека, а не смысл
+        if session.scalar(select(Candidate.id).where(active(), _surname(word)).limit(1)):
+            return "surname"
     return None
 
 
@@ -186,6 +203,8 @@ def by_contacts(session: Session, query: str, kind: str) -> list[Candidate]:
         cond = cast(Candidate.phones, Text).contains(f'"{normalize_phone(q)}"')
     elif kind == "email":
         cond = func.pylower(cast(Candidate.emails, Text)).contains(f'"{q.lower()}"')
+    elif kind == "surname":
+        cond = _surname(q.lower())
     else:
         cond = func.pylower(Candidate.full_name).contains(" ".join(q.lower().split()))
     return list(session.scalars(select(Candidate).where(active(), cond).limit(PAGE_SIZE)))
@@ -208,33 +227,70 @@ def _filter_stats(session: Session, filters: Filters, ids, total: int) -> tuple[
     return removed, relax
 
 
-def _paragraphs(text: str) -> list[str]:
-    blocks = [b.strip() for b in re.split(r"\n\s*\n", text or "") if b.strip()]
+# Строки шапки CRM и контактов во фрагмент не идут: «ID: 10062 ФИО: … Телефон: …».
+CRM_KEY_RE = re.compile(
+    r"(?i)^\s*(id|ид|код|номер|фио|ф\.?\s?и\.?\s?о\.?|имя|фамилия|отчество|кандидат|"
+    r"телефон\w*|тел\.?|моб\w*|e-?mail|email|почта|эл\.?\s?почта|дата рождения|"
+    r"год рождения|др|дата обновления|дата резюме|обновлено|файл\w*)\s*:"
+)
+SNIPPET = 160  # знаков во фрагменте под строкой выдачи
+
+
+def _paragraphs(c: Candidate) -> list[str]:
+    """Абзацы резюме без шапки CRM, строк с контактами и строки с ФИО."""
+    name = (c.full_name or "").lower().replace("ё", "е")
+    kept = []
+    for line in (c.raw_text or "").splitlines():
+        text = line.strip(" #*_\t")
+        if (
+            CRM_KEY_RE.match(text)
+            or EMAIL_RE.search(text)
+            or extract_phones(text)
+            or (name and text.lower().replace("ё", "е") == name)
+        ):
+            text = ""
+        kept.append(text)
+    blocks = [b.strip() for b in re.split(r"\n\s*\n", "\n".join(kept)) if b.strip()]
     out = []
     for block in blocks:
-        out += (
-            [ln.strip() for ln in block.splitlines() if ln.strip()] if len(block) > 400 else [block]
-        )
-    return [p for p in out if len(p) > 20]
+        out += [ln for ln in block.splitlines() if ln.strip()] if len(block) > 400 else [block]
+    return [" ".join(p.split()) for p in out if len(p) > 20]
 
 
-def fragment(c: Candidate, qvec: np.ndarray, query: str) -> Markup:
-    """Ближайший к запросу абзац резюме с подсвеченными словами запроса."""
-    paragraphs = _paragraphs(c.raw_text)
-    if not paragraphs:
-        return escape((c.parsed or {}).get("summary", ""))
-    stems = {w[:5].lower() for w in re.findall(r"\w{4,}", query)}
-    # Абзац, где есть слова запроса (так находит BM25), иначе ближайший по смыслу.
-    hits = [sum(w[:5].lower() in stems for w in re.findall(r"\w{4,}", p)) for p in paragraphs]
-    if max(hits) > 0:
+def _stem(word: str) -> str:
+    return word[:5].lower().replace("ё", "е")
+
+
+def _window(text: str, at: int) -> str:
+    """Не длиннее SNIPPET знаков вокруг позиции `at`, края по словам, с многоточиями."""
+    if len(text) <= SNIPPET:
+        return text
+    start = max(0, min(at - 40, len(text) - SNIPPET))
+    if start:
+        start = text.find(" ", start) + 1 or start
+    piece = text[start : start + SNIPPET - 2]
+    if start + len(piece) < len(text):
+        piece = piece.rsplit(" ", 1)[0].rstrip(" ,.;:—-") + "…"
+    return ("…" if start else "") + piece
+
+
+def fragment(c: Candidate, query: str) -> Markup:
+    """Абзац резюме со словами запроса (они подсвечены); без них — «Кратко» из разбора
+    или первый содержательный абзац. Модель здесь не нужна: фрагмент ищется по словам
+    за миллисекунды, а не кодируется заново на каждого кандидата страницы."""
+    stems = {_stem(w) for w in re.findall(r"\w{4,}", query)}
+    paragraphs = _paragraphs(c)
+    hits = [sum(_stem(w) in stems for w in re.findall(r"\w{4,}", p)) for p in paragraphs]
+    if hits and max(hits) > 0:
         best = paragraphs[hits.index(max(hits))]
+        first = next(m.start() for m in re.finditer(r"\w{4,}", best) if _stem(m.group()) in stems)
+        best = _window(best, first)
     else:
-        head = paragraphs[:40]
-        best = head[int(np.argmax(embed.encode(head, "passage") @ qvec))]
-    words = re.split(r"(\w+)", best[:300])
+        summary = " ".join(((c.parsed or {}).get("summary") or "").split())
+        best = _window(summary or (paragraphs[0] if paragraphs else ""), 0)
     return Markup("").join(
-        Markup(f"<mark>{escape(w)}</mark>") if w[:5].lower() in stems and len(w) >= 4 else escape(w)
-        for w in words
+        Markup(f"<mark>{escape(w)}</mark>") if len(w) >= 4 and _stem(w) in stems else escape(w)
+        for w in re.split(r"(\w+)", best)
     )
 
 
@@ -253,7 +309,7 @@ def search(session: Session, query: str, filters: Filters, sort: str = "meaning"
         removed, relax = _filter_stats(session, filters, None, total)
         return Result("list", [(c, None, None) for c in items], total, removed, relax, base=base)
 
-    if kind := looks_like_contact(query):
+    if kind := looks_like_contact(query, session):
         found = by_contacts(session, query, kind)
         if found or kind != "name":
             return Result("contacts", [(c, None, None) for c in found], len(found), base=base)
@@ -271,7 +327,9 @@ def search(session: Session, query: str, filters: Filters, sort: str = "meaning"
         ]
         items = list(session.scalars(select(Candidate).where(active(), *conds).limit(PAGE_SIZE)))
         return Result("words", [(c, None, None) for c in items], len(items), base=base)
-    pool, scores = hybrid(session, query)
+    pool, scores, by_words = _ranked(session, query)
+    # Ниже порога близости и без единого слова запроса — не «возможно», а мимо.
+    pool = [i for i in pool if i in by_words or scores.get(i, 0.0) >= CLOSE]
     passing = {
         c.id: c
         for c in session.scalars(
@@ -283,6 +341,5 @@ def search(session: Session, query: str, filters: Filters, sort: str = "meaning"
         ordered.sort(key=lambda c: c.resume_date or date.min, reverse=True)
     removed, relax = _filter_stats(session, filters, pool, len(ordered))
     page_items = ordered[(page - 1) * PAGE_SIZE : page * PAGE_SIZE]
-    qvec = embed.encode([query], "query")[0] if page_items else None
-    hits = [(c, closeness(scores.get(c.id, 0.0)), fragment(c, qvec, query)) for c in page_items]
+    hits = [(c, closeness(scores.get(c.id, 0.0)), fragment(c, query)) for c in page_items]
     return Result("meaning", hits, len(ordered), removed, relax, searched=len(ids), base=base)

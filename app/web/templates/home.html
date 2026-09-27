@@ -1,14 +1,23 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>Главная</h1>
+{% if not stats.records and not running %}
+<p class="sub">База пока пустая. Начните с неё: агент прочитает выгрузку из CRM и файлы резюме.</p>
+<div class="card offer">
+  <h4>Шаг 1. Загрузить базу</h4>
+  <p>Выгрузка из CRM (CSV или Excel), файлы резюме или целая папка. Агент сам поймёт колонки и покажет, что получится, до загрузки.</p>
+  <div class="actions"><a class="button" href="/upload">Загрузить базу</a></div>
+</div>
+{% if not has_key %}
+<div class="callout"><p>Чтобы агент разобрал резюме и оценивал кандидатов, нужен ключ доступа к ИИ. Его можно вставить и позже. <a href="/settings">Открыть настройки</a></p></div>
+{% endif %}
+{% else %}
 <p class="sub">Состояние базы и то, что требует внимания.</p>
 
 <div class="stats">
-  <div class="stat"><a href="/candidates"><b data-stat="candidates">{{ stats.candidates }}</b><span>кандидатов в базе</span></a></div>
-  <div class="stat"><a href="/duplicates/merged"><b data-stat="duplicates">{{ stats.duplicates }}</b><span>дублей объединено</span></a></div>
-  <div class="stat"><a href="/candidates?fresh=stale"><b data-stat="stale">{{ stats.stale }}</b><span>резюме старше полутора лет</span></a></div>
-</div>
-<div class="stats">
+  <div class="stat"><a href="/candidates"><b data-stat="candidates">{{ stats.candidates|num }}</b><span>{{ plural(stats.candidates, "кандидат", "кандидата", "кандидатов") }} в базе</span></a></div>
+  <div class="stat"><a href="/duplicates/merged"><b data-stat="duplicates">{{ stats.duplicates|num }}</b><span>{{ plural(stats.duplicates, "дубль объединён", "дубля объединено", "дублей объединено") }}</span></a></div>
+  <div class="stat"><a href="/candidates?fresh=stale"><b data-stat="stale">{{ stats.stale|num }}</b><span>резюме старше полутора лет</span></a></div>
   <div class="stat"><b data-stat="parsed">{{ stats.parsed|num }}</b><span>разобрано</span></div>
   <div class="stat"><b data-stat="waiting">{{ stats.waiting|num }}</b><span>ждут разбора</span></div>
   <div class="stat"><b data-stat="failed">{{ stats.failed|num }}</b><span>не удалось разобрать</span></div>
@@ -30,16 +39,14 @@
 {% endif %}
 
 <h2>Нужно проверить</h2>
-{% if not stats.records %}
-<div class="callout"><p>База пока пустая. <a href="/upload">Загрузите выгрузку из CRM</a> или папку с резюме.</p></div>
-{% elif not (stats.stale or with_errors or stats.possible) %}
+{% if not (stats.stale or with_errors or stats.possible) %}
 <div class="callout ok"><p>Всё в порядке: возможных дублей, устаревших записей и ошибок разбора нет.</p></div>
 {% endif %}
 
 {% if stats.possible %}
 <div class="callout warn">
   <span class="title">Похоже на дубль: {{ stats.possible }}</span>
-  <p>Записи похожи, но сами мы их не объединяем. <a class="button ghost" href="/duplicates">Проверить дубли</a></p>
+  <p>Записи похожи, но сам агент их не объединяет: решите по каждой паре. <a class="button ghost" href="/duplicates">Проверить дубли</a></p>
 </div>
 {% endif %}
 
@@ -59,5 +66,6 @@
 
 {% if stats.auto_merged %}
 <p>Объединено автоматически: <a href="/duplicates/merged">{{ stats.auto_merged }}</a>. Совпал телефон или почта, ФИО совместимо.</p>
+{% endif %}
 {% endif %}
 {% endblock %}

@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Пробный разбор · Кадровый агент{% endblock %}
+{% block content %}
+<p class="back"><a href="/">← На главную</a></p>
+<h1>Как агент понял {{ rows|length|count("резюме", "резюме", "резюме") }}</h1>
+<p class="sub">Сверьте с резюме: откройте карточку, слева будет то, что понял агент, справа — исходный текст. Если всё верно, запускайте разбор всей базы.</p>
+<div class="tablewrap">
+<table class="stack">
+  <thead><tr><th>Кандидат</th><th>Желаемая должность</th><th>Последняя должность и компания</th><th class="num">Стаж</th></tr></thead>
+  <tbody>
+  {% for c in rows %}
+  {% set p = c.parsed or {} %}
+  {% set positions = p.positions or [] %}
+  {% set last = (positions|selectattr("is_current")|first) or (positions|first) or {} %}
+  <tr>
+    <td class="name" data-label="Кандидат"><a href="/candidates/{{ c.id }}">{{ c.full_name or "Без имени" }}</a>{% if c.parse_status != "parsed" %} <span class="pill {{ 'stop' if c.parse_status == 'failed' else 'mid' }}">{{ PARSE_STATUS[c.parse_status] }}</span>{% endif %}</td>
+    <td data-label="Желаемая должность">{{ p.desired_position or "—" }}</td>
+    <td data-label="Последняя должность и компания">{% if last.title %}{{ last.title }}{% if last.company %}, {{ last.company }}{% endif %}{% else %}—{% endif %}</td>
+    <td class="num" data-label="Стаж">{{ p.total_years|years if p.total_years is number else "—" }}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% if offer.waiting %}
+<div class="actions">
+  <a class="button" href="/parse?scope=all">Начать разбор всей базы</a>
+</div>
+{% endif %}
+{% endblock %}

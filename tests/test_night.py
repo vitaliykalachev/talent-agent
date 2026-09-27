@@ -360,15 +360,21 @@ def web(session):
     return TestClient(create_app())
 
 
-def test_morning_screen_empty_base_offers_run_now(web):
+def test_morning_screen_before_first_night_is_calm(web, session):
+    """Аудит №17: до первой ночи — спокойный текст без красной плашки; на пустой базе
+    «Запустить сейчас» не предлагается, с кандидатами — предлагается."""
     r = web.get("/morning")
     assert r.status_code == 200
-    assert "Ночного прогона ещё не было." in r.text and "Запустить сейчас" in r.text
+    assert "Ночного прогона ещё не было." in r.text and "Запустить сейчас" not in r.text
+    assert "callout stop" not in r.text
+    session.add(Candidate(full_name="Иванов Иван", raw_text="Технолог"))
+    session.commit()
+    assert "Запустить сейчас" in web.get("/morning").text
     r = web.post("/night/run", follow_redirects=False)
     assert r.status_code == 303 and r.headers["location"] == "/morning"
     run_pending()
     r = web.get("/morning")
-    assert "За ночь новых подходящих кандидатов нет. Проверили 0 вакансий по 0 резюме." in r.text
+    assert "За ночь новых подходящих кандидатов нет. Проверили 0 вакансий по 1 резюме." in r.text
 
 
 def test_home_says_what_happens_tonight(web, session):

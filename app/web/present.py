@@ -121,6 +121,22 @@ def problem_summary(job: Job) -> str:
     return f"{num(len(items))} не получилось: {parts}"
 
 
+def reasons(job: Job) -> str:
+    """Причины сбоев словами, частые первыми: «ответ модели не получен, пустой файл»."""
+    found = Counter(reason for _, reason in problems(job) if reason)
+    return ", ".join(reason for reason, _ in found.most_common())
+
+
+def settings_hint(text: str | None) -> Markup:
+    """Текст ошибки; если дело в ключе — со ссылкой «Открыть настройки»."""
+    from app.llm import AUTH_MESSAGE
+
+    out = escape(text or "")
+    if AUTH_MESSAGE in (text or ""):
+        out += Markup(' <a href="/settings">Открыть настройки</a>')
+    return out
+
+
 def import_done(job: Job) -> str:
     """Итог загрузки: «30 строк и 5 файлов» — что именно прочитали."""
     rows, files = job.payload.get("rows"), job.payload.get("files")

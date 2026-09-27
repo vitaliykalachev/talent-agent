@@ -22,13 +22,17 @@
 <div class="card">
   <h4>Разбор резюме: {{ last|job_status }}</h4>
   {% if last.status == "failed" %}
-  <p>{{ last.error }}</p>
+  <p>{{ last.error|settings_hint }}</p>
+  {% elif last|job_status == "Не получилось" %}
+  <p>Не получилось: ни одно резюме не разобрано. Причина: {{ reasons(last) }}.</p>
+  <p><a class="button ghost" href="/jobs/{{ last.id }}/problems">Показать список</a>
+     <a class="button" href="/parse?scope=retry&job={{ last.id }}">Разобрать ещё раз</a></p>
   {% elif last.error %}
-  <p>{{ problem_summary(last) }}. Сетевые сбои агент уже повторил сам до трёх раз.</p>
+  <p>{{ problem_summary(last) }}.{% if network_errors(last) %} Сетевые сбои агент уже повторил сам до трёх раз.{% endif %}</p>
   <p><a class="button ghost" href="/jobs/{{ last.id }}/problems">Показать список</a>
      <a class="button" href="/parse?scope=retry&job={{ last.id }}">Разобрать ещё раз</a></p>
   {% else %}
-  <p>Разобрано {{ last.total|num }}. <a href="/candidates">Искать кандидатов</a></p>
+  <p>Разобрано {{ last.total|count("резюме", "резюме", "резюме") }}{% if last.payload.trial %} для проверки{% endif %}. <a href="/candidates">Искать кандидатов</a></p>
   {% endif %}
 </div>
 {% endif %}
