@@ -233,6 +233,7 @@ CRM_KEY_RE = re.compile(
     r"телефон\w*|тел\.?|моб\w*|e-?mail|email|почта|эл\.?\s?почта|дата рождения|"
     r"год рождения|др|дата обновления|дата резюме|обновлено|файл\w*)\s*:"
 )
+FIELD_LINE_RE = re.compile(r"^[^:]{1,30}:\s")
 SNIPPET = 160  # знаков во фрагменте под строкой выдачи
 
 
@@ -251,6 +252,10 @@ def _paragraphs(c: Candidate) -> list[str]:
             text = ""
         kept.append(text)
     blocks = [b.strip() for b in re.split(r"\n\s*\n", "\n".join(kept)) if b.strip()]
+    # блоки в начале только из строк «Колонка: значение» — остаток шапки CRM и резюме
+    # (город, должность, компания); во фрагмент они не идут, если есть что-то ещё
+    while len(blocks) > 1 and all(FIELD_LINE_RE.match(ln) for ln in blocks[0].splitlines()):
+        blocks = blocks[1:]
     out = []
     for block in blocks:
         out += [ln for ln in block.splitlines() if ln.strip()] if len(block) > 400 else [block]
