@@ -2,8 +2,9 @@
 {% block title %}Похоже на дубль · Кадровый агент{% endblock %}
 {% block content %}
 <p class="back"><a href="/">← Главная</a></p>
+{% include "merged_line.html" %}
 <h1>Похоже на дубль: {{ rows|length }}</h1>
-<p class="sub">Записи похожи, но сами мы их не объединяем: решите по каждой паре. <a href="/duplicates/merged">Объединённые автоматически</a></p>
+<p class="sub">Записи похожи, но сам агент их не объединяет: решите по каждой паре. <a href="/duplicates/merged">Объединённые автоматически</a></p>
 {% if rows %}
 <div class="tablewrap">
 <table class="stack">

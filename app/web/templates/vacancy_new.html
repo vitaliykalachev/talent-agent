@@ -4,7 +4,9 @@
 <p class="back"><a href="/vacancies">← Все вакансии</a></p>
 <h1>Новая вакансия</h1>
 {% if error %}<div class="callout stop"><p>{{ error }}</p></div>{% endif %}
-<form class="card settings" method="post" action="/vacancies/new">
+<form class="card settings" method="post" action="/vacancies/new"
+      hx-post="/vacancies/new" hx-target="main" hx-select="main" hx-swap="outerHTML"
+      hx-disabled-elt="find button[type=submit]">
   <label for="description">Опишите вакансию так, как рассказали бы коллеге</label>
   <textarea id="description" name="description" rows="8" required placeholder="Ищем начальника литейного цеха на завод в Самаре: руководил цехом от трёх лет, литьё под давлением, желательно бережливое производство. Люди только из продаж не нужны.">{{ form.get("description", "") }}</textarea>
   <label for="title">Название <small>можно не заполнять: агент предложит сам</small></label>
@@ -19,7 +21,7 @@
   <label for="top_n">Сколько кандидатов показать</label>
   <input id="top_n" type="number" min="1" max="200" name="top_n" value="{{ form.get('top_n', 40) }}">
   <label><input type="checkbox" name="schedule" value="1"{% if form.get('schedule', '1') %} checked{% endif %}> Оценивать каждую ночь <small>новые и обновлённые резюме, отчёт — на экране «Утро»</small></label>
-  <p><button class="button" type="submit">Разобрать описание</button></p>
+  <p><button class="button" type="submit"><span class="idle">Разобрать описание</span><span class="busy">Разбираем описание…</span></button></p>
   <p><small>Агент выделит обязательные и желательные требования, а вы поправите их до оценки. Разбор займёт 10–30 секунд.</small></p>
 </form>
 {% endblock %}

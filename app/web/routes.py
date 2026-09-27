@@ -580,6 +580,16 @@ def candidates(
 def candidate(request: Request, candidate_id: int, v: int | None = None):
     """Карточка кандидата; `v` — вакансия, чьи доводы подсветить в резюме
     («Показать в резюме»): строки каждого довода получают якорь e-<требование>."""
+    return _candidate_page(request, candidate_id, v)
+
+
+def _candidate_page(
+    request: Request,
+    candidate_id: int,
+    v: int | None = None,
+    fix_error: tuple[str, str, str] | None = None,
+) -> HTMLResponse:
+    """`fix_error` — (поле, что ввели, что не так): форма «Исправить» открыта с ошибкой."""
     with db.SessionLocal() as s:
         c = s.get(Candidate, candidate_id)
         if not c:
@@ -621,6 +631,9 @@ def candidate(request: Request, candidate_id: int, v: int | None = None):
         history=[(m, vac, evaluate.category(m)) for m, vac in history],
         shown=shown,
         CATEGORIES=evaluate.CATEGORIES,
+        fix_error=fix_error,
+        future=bool(c.resume_date and c.resume_date > date.today()),
+        status_code=400 if fix_error else 200,
     )
 
 
@@ -641,10 +654,12 @@ async def candidate_fix(request: Request, candidate_id: int):
         c = s.get(Candidate, candidate_id)
         if not c or field not in parse.EDITABLE:
             raise HTTPException(404)
+        value = str(form.get("value", ""))
         try:
-            parse.apply_edit(c, field, str(form.get("value", "")))
+            parse.apply_edit(c, field, value)
         except ValueError:
-            raise HTTPException(400, "Нужно число не меньше нуля, например 12,5") from None
+            error = (field, value, "Нужно число не меньше нуля, например 12,5.")
+            return _candidate_page(request, candidate_id, fix_error=error)
         s.commit()
     return RedirectResponse(f"/candidates/{candidate_id}#f-{field}", status_code=303)
 

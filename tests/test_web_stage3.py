@@ -123,7 +123,8 @@ def test_results_groups_card_and_resume_link(web, session, base, mock):  # noqa:
     assert '<details class="group fit" open>' in text
     assert "обязательные 2 из 2 · желательные 2 из 2" in text
     assert "Почему подходит" in text and "Что настораживает" not in text.split("Орлова")[0]
-    assert "Новый" in text and "Понятно" in text
+    # аудит №13 и №14: после первой оценки «Новый» ни у кого; оговорка — строка без кнопки
+    assert "Новый" not in text and "Понятно" not in text and "может ошибиться" in text
     assert "Вопросы на первый созвон" in text and "Какой был объём выпуска?" in text
     assert "в резюме не сказано" in text  # у Орловой по трём требованиям нет данных
     link = f"/candidates/{p['Громов'].id}?v={v.id}#e-r1"
@@ -131,9 +132,6 @@ def test_results_groups_card_and_resume_link(web, session, base, mock):  # noqa:
     card = page(web, link.split("#")[0])
     assert '<mark id="e-r1">' in card and "Подсвечены строки" in card
     assert "Оценки по вакансиям" in card and "Начальник цеха литья" in card
-
-    web.post(f"/vacancies/{v.id}/notice")
-    assert "Понятно" not in page(web, f"/vacancies/{v.id}/results")
 
 
 def test_decisions_hide_rejected_and_survive_rerun(web, session, base, mock):  # noqa: F811

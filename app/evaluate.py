@@ -445,19 +445,28 @@ def model_text(c: Candidate) -> str:
 SENTENCE_RE = re.compile(r"(?<=[.!?;])\s+|\n+")
 
 
+def _split_fair(v: Vacancy) -> tuple[list[str], list[str]]:
+    """Предложения описания: (оставленные, вырезанные). Вырезается предложение, где
+    срабатывает DISCRIMINATORY_RE или стоит требование, помеченное как дискриминационное."""
+    flagged = [r["name"].lower() for r in v.requirements if r.get("flag") == "discriminatory"]
+    kept, cut = [], []
+    for part in SENTENCE_RE.split(v.description or ""):
+        if not part.strip():
+            continue
+        unfair = DISCRIMINATORY_RE.search(part) or any(name in part.lower() for name in flagged)
+        (cut if unfair else kept).append(part.strip())
+    return kept, cut
+
+
 def fair_description(v: Vacancy) -> str:
     """Описание без предложений про возраст, пол, семью и т. п.: модель оценки не должна
-    их видеть. Вырезается предложение, где срабатывает DISCRIMINATORY_RE или стоит
-    требование, помеченное как дискриминационное."""
-    flagged = [r["name"].lower() for r in v.requirements if r.get("flag") == "discriminatory"]
-    kept = [
-        part
-        for part in SENTENCE_RE.split(v.description or "")
-        if part.strip()
-        and not DISCRIMINATORY_RE.search(part)
-        and not any(name in part.lower() for name in flagged)
-    ]
-    return " ".join(kept)
+    их видеть."""
+    return " ".join(_split_fair(v)[0])
+
+
+def unfair_sentences(v: Vacancy) -> list[str]:
+    """Что вырезано из описания — рекрутёр видит это над «Портретом»."""
+    return _split_fair(v)[1]
 
 
 def prompt(session: Session, v: Vacancy, c: Candidate, text: str) -> str:
@@ -481,10 +490,14 @@ def prompt(session: Session, v: Vacancy, c: Candidate, text: str) -> str:
 
 
 def _quote(text: str, lines: list[int] | None, limit: int = 240) -> str | None:
+    """Цитата по строкам резюме: без ведущего тире списка, длинная — обрезана по слову."""
     if not lines:
         return None
     quote = " ".join(" ".join(text.split("\n")[lines[0] - 1 : lines[1]]).split())
-    return quote if len(quote) <= limit else quote[: limit - 1].rstrip() + "…"
+    quote = quote.lstrip("—–-•* ")
+    if len(quote) <= limit:
+        return quote
+    return quote[:limit].rsplit(" ", 1)[0].rstrip(" ,.;:—–-") + "…"
 
 
 def checked(evaluation: Evaluation, requirements: list[dict], text: str) -> list[dict]:

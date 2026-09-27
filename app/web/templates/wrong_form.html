@@ -1,0 +1,13 @@
+{# Форма «Неверно» — одна на запрос: подгружается по нажатию, а не лежит в каждой карточке. #}
+<form class="wrong-form" method="post" action="/vacancies/{{ v.id }}/feedback">
+  <input type="hidden" name="candidate_id" value="{{ candidate_id }}">
+  <input type="hidden" name="target" value="{{ target }}">
+  <input type="hidden" name="text" value="{{ text }}">
+  <p><small>Что не так с «{{ text }}»?</small></p>
+  {% for k, label in FEEDBACK_KINDS.items() %}
+  <label><input type="radio" name="kind" value="{{ k }}" required> {{ label }}</label>
+  {% endfor %}
+  <input type="text" name="note" placeholder="Что не так (для «Другое…»)">
+  <select name="scope"><option value="vacancy">Только для этой вакансии</option><option value="all">Для всех вакансий</option></select>
+  <button class="button" type="submit">Отправить</button>
+</form>

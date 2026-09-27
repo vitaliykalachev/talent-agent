@@ -1,5 +1,6 @@
 """Как показывать данные на экране: числа, сроки, деньги, статусы, подсветка исходника."""
 
+import re
 import time
 from collections import Counter
 
@@ -34,6 +35,14 @@ def plural(n: int, one: str, few: str, many: str) -> str:
 def count(n: int, one: str, few: str, many: str) -> str:
     """Число со словом в нужной форме: «1 кандидат», «3 записи», «35 000 файлов»."""
     return f"{num(n)}{NBSP}{plural(int(n), one, few, many)}"
+
+
+def short_name(full: str | None) -> str:
+    """«Давыдов Андрей Михайлович» → «Давыдов А. М.»."""
+    parts = (full or "").split()
+    if not parts:
+        return "Без имени"
+    return " ".join([parts[0], *(f"{w[0]}." for w in parts[1:3])])
 
 
 def years(value) -> str:
@@ -203,6 +212,26 @@ def stale_note(c: Candidate) -> str:
     return "Дата резюме не указана — уточните на созвоне, актуально ли оно"
 
 
+RELOCATION_RE = re.compile(r"(?i)(?:пере|от)езд\w*|релокац\w*|командировк\w*")
+
+
+def field_spans(text: str, parsed: dict) -> list[tuple[int, int, str]]:
+    """Опора для навыков, города, переезда и языков: первое место в резюме, где стоит
+    значение поля (для навыков и языков — первое из найденных)."""
+    lower = text.lower()
+    found = []
+    for field in ("city", "skills", "languages"):
+        values = parsed.get(field) or []
+        for value in [values] if isinstance(values, str) else values:
+            at = lower.find(str(value).lower()) if value else -1
+            if at >= 0:
+                found.append((at, at + len(value), f"q-{field}"))
+                break
+    if (parsed.get("relocation") or "unknown") != "unknown" and (m := RELOCATION_RE.search(text)):
+        found.append((m.start(), m.end(), "q-relocation"))
+    return found
+
+
 def marked_source(c: Candidate, extra: list[tuple[str, list[int]]] = ()) -> tuple[Markup, set[str]]:
     """Исходник с метками <mark id> на строках и цитатах, на которых основаны поля слева;
     `extra` — ещё строки для подсветки (довод оценки по ссылке «Показать в резюме»)."""
@@ -215,6 +244,7 @@ def marked_source(c: Candidate, extra: list[tuple[str, list[int]]] = ()) -> tupl
     quote = parsed.get("summary_quote")
     if quote and (span := quote_span(quote, c.raw_text)):
         spans.append((*span, "q-s"))
+    spans += field_spans(c.raw_text, parsed)
     spans.sort()
     out, pos, anchors = [], 0, set()
     for start, stop, anchor in spans:

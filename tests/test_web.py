@@ -86,7 +86,7 @@ def test_candidates_search_filters_and_card(client):
     card_id = re.search(r'href="/candidates/(\d+)"', page).group(1)
     card = client.get(f"/candidates/{card_id}")
     assert card.status_code == 200
-    assert "+79031112233" in card.text
+    assert "+7\xa0903\xa0111-22-33" in card.text  # аудит №21: телефон по-человечески
 
 
 def test_duplicate_card_links_to_main_record(client):

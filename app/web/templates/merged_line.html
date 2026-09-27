@@ -1,0 +1,4 @@
+{% if done %}
+<div class="callout ok" role="status"><p>Объединили: {{ done.name }} ·
+  <form method="post" action="/duplicates/{{ done.id }}/unmerge" class="inline"><input type="hidden" name="back" value="pair"><button class="button ghost" type="submit">Отменить</button></form></p></div>
+{% endif %}

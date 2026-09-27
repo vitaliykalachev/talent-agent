@@ -309,18 +309,29 @@ table.hits tbody tr{background:none}
 .outcome ul{margin:0 0 12px}
 .outcome fieldset.choose{flex-direction:column;gap:2px}
 .notice-line{font-size:14px;color:var(--ink-soft);margin:10px 0 18px}
+.wrap > .card,.wrap > details.card,.wrap > section.card,.wrap > form.card{margin:18px 0}
+.settings textarea{width:100%;min-height:10em}
+.busy{display:none}
+.htmx-request .busy{display:inline}
+.htmx-request .idle{display:none}
+.button:disabled{opacity:.7;cursor:progress}
+.field-error{color:var(--red);font-size:14px;margin:0;flex-basis:100%}
+[aria-invalid=true]{border-color:var(--red)}
+label.off{color:var(--ink-mute)}
+a.wrong{font-size:13px;margin-left:6px;color:var(--ink-mute);text-decoration:underline dotted}
+form.wrong-form{display:flex;flex-direction:column;gap:4px;margin:6px 0;padding:8px;border:1px solid var(--line);border-radius:var(--radius);background:var(--bg-soft)}
 @media (max-width:820px){
   .stats{grid-template-columns:1fr 1fr}
   table.hits tbody tr.hit.with-frag{border-bottom:none;border-radius:var(--radius) var(--radius) 0 0;margin-bottom:0;padding-bottom:4px}
   table.hits tbody tr.frag-row{border-top:none;border-radius:0 0 var(--radius) var(--radius);padding-top:0}
   table.hits td.frag{padding-bottom:0}
   /* кнопки и ссылки-действия под палец: не ниже 44 px */
-  .button,details.fix summary,details.wrong summary,.x,.chip,.pager a,.tabs > label{
+  .button,details.fix summary,a.wrong,.x,.chip,.pager a,.tabs > label,details.reject summary{
     min-height:44px;display:inline-flex;align-items:center;
   }
   .x{min-width:44px;justify-content:center;font-size:22px}
   .plate{padding-right:48px}
   .plate .remove{top:0;right:0}
-  details.fix summary,details.wrong summary{font-size:15px;padding:0 6px}
-  details.wrong summary{color:var(--accent)}
+  details.fix summary,a.wrong{font-size:15px;padding:0 6px}
+  a.wrong{color:var(--accent)}
 }

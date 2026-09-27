@@ -8,6 +8,9 @@
 </div>
 <details class="card"><summary>Описание вакансии</summary><p class="prewrap">{{ v.description }}</p></details>
 
+{% if unfair %}
+<div class="callout warn unfair"><p>Из описания не взяли: {% for part in unfair %}«{{ part }}»{% if not loop.last %}, {% endif %}{% endfor %} — возраст, пол и семья в оценке не участвуют.</p></div>
+{% endif %}
 <section class="card" id="portrait">
   <h2>Портрет кандидата</h2>
   <p class="sub">Так агент понял вакансию. Удалите лишнее, поправьте и допишите: по этим требованиям он проверит каждое резюме.</p>
