@@ -215,6 +215,23 @@ def test_bad_key_stops_job_with_human_message(five, session, tmp_path):
     assert job.error == "Ключ доступа не подошёл. Проверьте, что скопировали его целиком."
 
 
+def test_resume_without_recorded_answer_is_failed_not_empty(five, session, tmp_path):
+    """Решение главной сессии: у мока нет ответа на резюме — «Не удалось разобрать»
+    с причиной «нет записанного ответа», а не пустой профиль со статусом «Разобрано»."""
+    folder = tmp_path / "empty"
+    folder.mkdir()
+    config.save({"llm_fixtures": str(folder)})
+    job = parse_all(session)
+    assert job.status == "done"
+    for c in five.values():
+        session.refresh(c)
+        assert (c.parse_status, c.parse_error, c.parsed) == (
+            "failed",
+            "нет записанного ответа",
+            None,
+        )
+
+
 def test_user_edit_survives_reparse(five, session):
     parse_all(session)
     c = five["production.txt"]
