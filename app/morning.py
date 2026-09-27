@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 
 from sqlalchemy import func, select
 
-from app import schedule
+from app import night, schedule
 from app.models import Candidate, NightRun, Vacancy
 from app.web.present import MONTHS, NBSP, num, plural
 
@@ -106,6 +106,8 @@ def view(s, now: datetime | None = None) -> dict:
         alert, run_now = "Ночного прогона ещё не было.", True
     elif run.status in ("failed", "missed"):
         alert, run_now = run.error, True
+    elif run.status in ("queued", "running") and run.id not in night.working_runs(s):
+        alert, run_now = night.BROKEN, True  # «Запустить сейчас» поставит новый прогон
     elif run.status in ("queued", "running"):
         alert = "Ночной прогон идёт. Отчёт появится здесь, когда он закончится."
     elif expected and (run.planned_at or run.started_at) < expected - timedelta(minutes=1):

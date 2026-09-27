@@ -61,7 +61,7 @@ def _candidate_id(form) -> int | None:
     value = str(form.get("candidate_id", "")).strip()
     if not value:
         return None
-    if not value.isdigit() or len(value) > 12:
+    if not (value.isascii() and value.isdigit()) or len(value) > 12:
         raise HTTPException(400, "Не понял, о каком кандидате речь: обновите страницу.")
     return int(value)
 

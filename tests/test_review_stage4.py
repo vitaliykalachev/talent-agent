@@ -131,6 +131,27 @@ def test_4_stuck_running_night_is_failed_and_new_one_queued(session):
     assert view["run"].id == fresh.id and view["alert"] is None
 
 
+def test_4_morning_shows_broken_run_with_run_now(session):
+    stuck = NightRun(status="running", started_at=datetime(2026, 9, 27, 2, 0), summary={})
+    session.add(stuck)
+    session.commit()  # задачи night нет — прогон оборвался
+    view = morning.view(session)
+    assert view["alert"] == night.BROKEN and view["run_now"]
+
+
+def test_mini_odd_ids_are_400_or_404(web, session, base):  # noqa: F811
+    v, _ = base
+    r = web.post(f"/vacancies/{v.id}/decision", data={"candidate_id": "²", "decision": "invite"})
+    assert r.status_code == 400
+    assert web.get("/candidates/" + "9" * 23).status_code == 404
+
+
+def test_mini_docker_image_has_tzdata():
+    from pathlib import Path
+
+    assert "tzdata" in (Path(__file__).parent.parent / "Dockerfile").read_text()
+
+
 def test_4_live_run_is_not_duplicated(session):
     first = night.enqueue()
     assert night.enqueue().id == first.id
@@ -142,11 +163,25 @@ def test_4_live_run_is_not_duplicated(session):
 
 @pytest.mark.parametrize(
     "text",
-    ["Мужского пола", "Женский коллектив", "Лицо мужского пола", "С детьми не рассматриваем",
-     "Бездетная", "Возраст 45+"],
+    ["Мужского пола", "Лицо женского пола", "С детьми не рассматриваем", "Бездетная",
+     "Возраст 45+", "Кандидат 45+", "Не старше 45+", "25–35 лет", "Возраст 25–35 лет",
+     "Девушка с опытом продаж", "Парень до 30", "Молодой специалист до 30", "Холост",
+     "Мужчина до 40 лет", "Только молодые и активные"],
 )  # fmt: skip
 def test_more_discriminatory_wordings(text):
     assert ev.DISCRIMINATORY_RE.search(text), text
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["Опыт работы 10+ лет", "Руководил командой 20+ человек", "Стаж 15+", "Укладка пола",
+     "Ремонт пола в цехах", "Женская одежда, опыт продаж", "Мужская обувь: категорийный менеджер",
+     "Опыт руководства 10+ лет", "Опыт 10–15 лет"],
+)  # fmt: skip
+def test_ordinary_requirements_are_not_discriminatory(text):
+    """Второй круг приёмки: обычные требования не помечаются и не пропадают из оценки."""
+    assert not ev.DISCRIMINATORY_RE.search(text), text
+    assert ev._requirement([], text, "must", "ai")["flag"] != "discriminatory"
 
 
 @pytest.mark.parametrize("text", ["Возраст — 45 лет", "мне уже 45 лет"])

@@ -8,6 +8,7 @@ from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI
+from fastapi.responses import PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 from app import db, embed, jobs, schedule
@@ -38,6 +39,10 @@ def create_app(data_dir: Path | str | None = None) -> FastAPI:
             await warm
 
     app = FastAPI(title="Кадровый агент", lifespan=lifespan)
+    # id больше, чем помещается в базу (/candidates/<23 цифры>), — такой записи нет
+    app.add_exception_handler(
+        OverflowError, lambda _r, _e: PlainTextResponse("Такой записи нет.", status_code=404)
+    )
     app.mount("/static", StaticFiles(directory=STATIC), name="static")
     app.include_router(router)
     app.include_router(vacancies_router)

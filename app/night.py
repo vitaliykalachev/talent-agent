@@ -26,22 +26,30 @@ def hhmm(moment: datetime) -> str:
     return moment.strftime("%H:%M")
 
 
+BROKEN = "Ночной прогон оборвался: приложение закрыли или компьютер выключился."
+
+
+def working_runs(s) -> set:
+    """Прогоны, у которых задача night в очереди или идёт; запись «идёт» без такой
+    задачи — оборвавшийся прогон."""
+    return {
+        j.payload.get("run_id")
+        for j in s.scalars(
+            select(Job).where(Job.kind == "night", Job.status.in_(("queued", "running")))
+        )
+    }
+
+
 def enqueue(planned_at: datetime | None = None, fired_at: datetime | None = None) -> NightRun:
     """Ставит ночной прогон; `planned_at` пусто — «Запустить сейчас». Пока прогон в
     очереди или идёт, второй не ставится."""
     with db.SessionLocal() as s:
-        working = {
-            j.payload.get("run_id")
-            for j in s.scalars(
-                select(Job).where(Job.kind == "night", Job.status.in_(("queued", "running")))
-            )
-        }
+        working = working_runs(s)
         for live in s.scalars(select(NightRun).where(NightRun.status.in_(("queued", "running")))):
             if live.id in working:
                 return live
             # задача уже закончилась или пропала, а запись осталась «идёт» — прогон оборвался
-            live.status = "failed"
-            live.error = "Ночной прогон оборвался: приложение закрыли или компьютер выключился."
+            live.status, live.error = "failed", BROKEN
             live.summary = {**live.summary, "error": live.error}
         run = NightRun(
             planned_at=planned_at,
