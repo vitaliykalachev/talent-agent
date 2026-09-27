@@ -1,0 +1,47 @@
+[
+ {
+  "match": "Ищем начальника литейного производства на машиностроительный",
+  "schema": "VacancyDraft",
+  "response": {
+   "requirements": [
+    {
+     "flag": null,
+     "kind": "must",
+     "name": "Руководил цехом или производственным участком",
+     "suggestion": null
+    },
+    {
+     "flag": null,
+     "kind": "must",
+     "name": "Опыт работы с литьём (под давлением, кокиль, песчаные формы)",
+     "suggestion": null
+    },
+    {
+     "flag": null,
+     "kind": "must",
+     "name": "Отрасль — машиностроение / литейное производство",
+     "suggestion": null
+    },
+    {
+     "flag": null,
+     "kind": "nice",
+     "name": "Внедрял инструменты бережливого производства",
+     "suggestion": null
+    },
+    {
+     "flag": null,
+     "kind": "nice",
+     "name": "Готовил завод к сертификации ISO 9001",
+     "suggestion": null
+    },
+    {
+     "flag": null,
+     "kind": "avoid",
+     "name": "Опыт только в продажах",
+     "suggestion": null
+    }
+   ],
+   "title": "Начальник литейного производства"
+  }
+ }
+]

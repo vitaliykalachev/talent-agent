@@ -1,9 +1,11 @@
 """Демо-набор: 300 синтетических резюме, выгрузка «как из CRM» и папка с DOCX и TXT.
 
 Запуск: `make demo` (или `TA_DATA_DIR=data/demo uv run python -m app.demo`).
-Набор проходит через обычный конвейер импорта, потом разбирается на записанных
-ответах модели (out/llm/answers.json), получает смысловые отпечатки и одну готовую
-вакансию с оценкой (`app/demo_vacancy.py`).
+Набор проходит через обычный конвейер импорта, потом разбирается на ответах модели,
+записанных один раз с живой модели (`app/demo_data/llm/`, `make record-demo`),
+получает смысловые отпечатки, вакансию «Оценивать каждую ночь» (`app/demo_vacancy.py`)
+и один ночной прогон с отчётом на «Утре». Тесты берут ответы, которые пишет код по
+фактам генератора (out/llm/answers.json), — они не зависят от записи.
 """
 
 import csv
@@ -18,13 +20,16 @@ from datetime import date, timedelta
 from pathlib import Path
 from xml.sax.saxutils import escape
 
-from app import config, db, demo_vacancy
+from app import config, db, demo_record, demo_vacancy, night
 from app.importer.pipeline import new_batch, start_import
 from app.jobs import run_pending
 from app.parse import start_parse, waiting_ids
 
 PER_PROFESSION = 60
 DUPLICATE_SHARE = 0.05
+POSSIBLE = 3  # из них — возможные дубли без общих контактов
+RECORDED = Path(__file__).parent / "demo_data" / "llm"  # ответы живой модели для демо
+RECORDED_ON = date(2026, 9, 27)  # день записи: от него считаются даты в демо-резюме
 STALE_SHARE = 0.20
 
 MALE = [
@@ -767,9 +772,11 @@ def generate(out: Path, seed: int = 42, today: date | None = None) -> tuple[Path
         ):
             long_one, text = p, text + "\n" + "\n".join(SECOND_PAGE)
         answers.append({"match": f"ID: {p['ext_id']}\n", "response": recorded_answer(p, facts)})
+        p["text"], p["facts"] = text, facts
         where = rnd.choices(["csv", "docx", "txt"], weights=[6, 2, 2])[0]
         if where == "txt" and short_names[(p["last"], p["first"])] > 1:
             where = "docx"  # по неоднозначному имени файл не связать — называем по ID
+        p["where"] = where
         full = f"{p['last']} {p['first']} {p['middle']}"
         if where == "docx":
             write_docx(resumes / f"{p['ext_id']}.docx", text.splitlines())
@@ -793,9 +800,31 @@ def generate(out: Path, seed: int = 42, today: date | None = None) -> tuple[Path
         )
 
     # 5 % дублей: тот же человек, другое оформление телефона или почты, более старая запись.
+    # Первые POSSIBLE из них — без общих контактов: то же ФИО, город и дата рождения, но
+    # телефон и почта другие. Сами не склеиваются, попадают в очередь «Похоже на дубль».
     fresh_people = [p for p in people if id(p) not in stale_ids]
-    for p in rnd.sample(fresh_people, int(len(people) * DUPLICATE_SHARE)):
+    doubled = rnd.sample(fresh_people, int(len(people) * DUPLICATE_SHARE))
+    # файл, названный по ФИО, при однофамильце в выгрузке не связать — таких не берём
+    possible = {id(p) for p in [p for p in doubled if p["where"] != "txt"][:POSSIBLE]}
+    for p in doubled:
         ext_id += rnd.randint(1, 7)
+        if id(p) in possible:
+            rows.append(
+                {
+                    "ID": str(ext_id),
+                    "ФИО": f"{p['last']} {p['first']} {p['middle']}",
+                    "Телефон": _fmt_phone(_phone(rnd, phones), 0),
+                    "E-mail": _email(rnd, p, emails),
+                    "Город": p["city"],
+                    "Должность": p["title"],
+                    "Компания": p["company"],
+                    "Дата рождения": p["birth"].strftime("%d.%m.%Y"),
+                    "Дата обновления": (p["updated"] - timedelta(days=200)).strftime("%d.%m.%Y"),
+                    "Резюме": p["text"],
+                }
+            )
+            answers.append({"match": f"ID: {ext_id}\n", "response": recorded_answer(p, p["facts"])})
+            continue
         by_phone = rnd.random() < 0.6
         rows.append(
             {
@@ -827,9 +856,14 @@ def generate(out: Path, seed: int = 42, today: date | None = None) -> tuple[Path
     return table, resumes
 
 
-def build(target: Path) -> None:
-    """Чистая демо-база в `target`: импорт, разбор на записанных ответах, отпечатки и
-    готовая вакансия с оценкой (раздел 9 плана)."""
+def build(target: Path, record: bool = False) -> None:
+    """Чистая демо-база в `target` (раздел 9 плана): импорт, разбор, отпечатки, вакансия
+    «Оценивать каждую ночь» и один ночной прогон, который её оценивает и оставляет отчёт
+    на «Утре».
+
+    Ответы модели — записанные с живой модели (`app/demo_data/llm/`), ключ не нужен.
+    `record=True` — один раз прогнать то же самое через настоящий сервис из настроек и
+    окружения и записать ответы туда (`make record-demo`)."""
     db.configure(target)
     if (db.data_dir / "app.db").exists():  # демо всегда начинается с чистой базы
         db.engine.dispose()
@@ -837,26 +871,33 @@ def build(target: Path) -> None:
             (db.data_dir / name).unlink(missing_ok=True)
         shutil.rmtree(db.data_dir / "uploads", ignore_errors=True)
         db.configure(db.data_dir)
-    table, resumes = generate(db.data_dir / "source")
+    # Дата фиксирована: записанные ответы совпадают с текстом резюме слово в слово.
+    table, resumes = generate(db.data_dir / "source", today=RECORDED_ON)
     with db.SessionLocal() as session:
         batch = new_batch(session, table, [resumes])
         start_import(session, batch, batch.mapping)
     run_pending()
-    # Разбор на записанных ответах модели — демо работает без ключа и без сети;
-    # в «Настройках» можно переключиться на настоящий сервис и «Разобрать заново».
-    fixtures = db.data_dir / "source" / "llm"
-    config.save({"llm_provider": "mock", "llm_fixtures": str(fixtures)})
+    recorder = demo_record.Recorder(RECORDED) if record else None
+    if recorder:
+        recorder.attach()
+    else:  # записанные ответы; в «Настройках» можно переключиться на настоящий сервис
+        config.save({"llm_provider": "mock", "llm_fixtures": str(RECORDED)})
     with db.SessionLocal() as session:
         start_parse(session, waiting_ids(session))
     run_pending()
-    demo_vacancy.create(fixtures)
+    vacancy = demo_vacancy.create()
+    night.enqueue()
+    run_pending()
+    if recorder:
+        recorder.extra(vacancy)  # запас на случай другого порядка поиска на другой машине
+        recorder.save(RECORDED)
 
 
 def main() -> None:
     target = Path(os.environ.get("TA_DATA_DIR") or "data/demo")
     if target.name != "demo" and (target / "app.db").exists():
         sys.exit(f"Демо пересоздаёт базу; {target} не похожа на демо-папку, не трогаю.")
-    build(target)
+    build(target, record="--record" in sys.argv)
     print(f"Демо готово: {db.data_dir / 'app.db'}")
 
 

@@ -83,9 +83,11 @@ def demo_base(tmp_path_factory):
     with db.SessionLocal() as s:
         start_parse(s, waiting_ids(s))
     run_pending()
-    from app import demo_vacancy
+    from app import demo_vacancy, night
 
-    demo_vacancy.create(root / "source" / "llm")  # готовая вакансия с оценкой, как в make demo
+    demo_vacancy.create(root / "source" / "llm")  # вакансия, которую оценит ночной прогон
+    night.enqueue()  # как в make demo: ночь оценивает вакансию и оставляет «Утро»
+    run_pending()
 
     def connect():
         db.configure(root / "data")
