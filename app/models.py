@@ -91,6 +91,8 @@ class Match(Base):
     )  # new|resume_updated|vacancy_changed
     # [{requirement_id, name, kind, weight, verdict, evidence_lines, note}]
     checks: Mapped[list] = mapped_column(JSON, default=list)
+    # ответ модели как есть, до проверки строк кодом — для набора проверки eval/
+    raw_checks: Mapped[list | None] = mapped_column(JSON)
     reasons: Mapped[list] = mapped_column(JSON, default=list)  # производное от checks
     concerns: Mapped[list] = mapped_column(JSON, default=list)  # [{text, evidence_lines}]
     questions: Mapped[list] = mapped_column(JSON, default=list)

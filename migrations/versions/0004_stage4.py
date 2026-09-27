@@ -1,4 +1,4 @@
-"""этап 4: ночные прогоны, обратимое слияние дублей
+"""этап 4: ночные прогоны, обратимое слияние дублей, сырые ответы оценки
 
 Revision ID: 0004
 Revises: 0003
@@ -28,9 +28,13 @@ def upgrade() -> None:
         t.add_column(sa.Column("snapshot", sa.JSON(), nullable=True))
         t.add_column(sa.Column("created_at", sa.DateTime(), nullable=True))
         t.add_column(sa.Column("postponed_at", sa.DateTime(), nullable=True))
+    with op.batch_alter_table("matches") as t:
+        t.add_column(sa.Column("raw_checks", sa.JSON(), nullable=True))
 
 
 def downgrade() -> None:
+    with op.batch_alter_table("matches") as t:
+        t.drop_column("raw_checks")
     with op.batch_alter_table("duplicates") as t:
         t.drop_column("postponed_at")
         t.drop_column("created_at")

@@ -40,9 +40,17 @@ BIRTH_RE = re.compile(
     rf"((?:дата\s+рожд(?:ения|\.)?|д\.\s?р\.|г\.\s?р\.|родил(?:ся|ась)|год\s+рождения)\s*:?\s*)"
     rf"{DATE_VALUE}(?:\s*г(?:ода|\.)?)?"
     r"|\b\d{4}\s*г\.?\s*р\.?"
-    r"|((?:возраст|мужчина|женщина|муж\.|жен\.)\s*[:,]?\s*)\d{2}\s*(?:год|года|лет)\b",
+    r"|((?:возраст|мужчина|женщина|муж\.|жен\.|(?<![а-яё])мне)\s*[:,]?\s*)"
+    r"\d{2}\s*(?:год|года|лет)\b",
     re.IGNORECASE,
 )
+TOKEN_RE = re.compile(r"\[[А-ЯЁ ]+\]|\w[\w-]*")
+# Служебные подписи контактов: строка из них и меток опорой вердикта не считается.
+LABELS = {
+    "тел", "телефон", "телефоны", "моб", "мобильный", "почта", "e-mail", "email", "e", "mail",
+    "контакты", "контакт", "фио", "дата", "рождения", "рожд", "д", "р", "г", "адрес", "skype",
+    "telegram", "телеграм", "ссылка", "профиль",
+}  # fmt: skip
 SAME_RUN_RE = re.compile(r"\[ИМЯ\](?:[\s,]*\[ИМЯ\])+")
 INITIALS_AFTER_RE = re.compile(r"(\[ИМЯ\])\s*(?:[А-ЯЁA-Z]\.\s?){1,2}")
 INITIALS_BEFORE_RE = re.compile(r"(?:\b[А-ЯЁA-Z]\.\s?){1,2}\s*(\[ИМЯ\])")
@@ -129,7 +137,9 @@ def _remove_name(text: str, full_name: str | None) -> str:
 
 
 def _phone_or_keep(match: re.Match) -> str:
-    return PHONE if len(re.sub(r"\D", "", match.group())) >= 10 else match.group()
+    if len(re.sub(r"\D", "", match.group())) < 10:
+        return match.group()
+    return PHONE + "\n" * match.group().count("\n")  # число строк не меняется
 
 
 def anonymize(text: str, full_name: str | None = None, phones=(), emails=(), links=()) -> str:
@@ -160,10 +170,17 @@ def valid_lines(value, text: str) -> list[int] | None:
     lines = text.split("\n")
     if not 1 <= start <= stop <= len(lines):
         return None
-    cited = PLACEHOLDER_RE.sub("", "\n".join(lines[start - 1 : stop]))
-    if not re.search(r"\w{2,}", cited):
+    if not any(_meaningful(line) for line in lines[start - 1 : stop]):
         return None
     return [start, stop]
+
+
+def _meaningful(line: str) -> bool:
+    """Строка — опора, если метки и служебные подписи («Тел.: [ТЕЛЕФОН], [ПОЧТА]»)
+    занимают в ней не больше половины слов."""
+    tokens = TOKEN_RE.findall(line)
+    service = sum(PLACEHOLDER_RE.fullmatch(t) is not None or t.lower() in LABELS for t in tokens)
+    return bool(tokens) and service * 2 <= len(tokens)
 
 
 def _anonymize(text: str, full_name, phones, emails, links) -> str:
@@ -178,8 +195,8 @@ def _anonymize(text: str, full_name, phones, emails, links) -> str:
     text = DOCUMENT_RE.sub(DOCUMENT, text)
     text = BIRTH_RE.sub(lambda m: (m.group(1) or m.group(2) or "") + BIRTH, text)
     text = PHONE_RE.sub(_phone_or_keep, text)
-    for phone in phones:
-        text = re.sub(_digits_pattern(phone), PHONE, text)
+    for phone in phones:  # номер, разорванный переносом, — метка, переносы на месте
+        text = re.sub(_digits_pattern(phone), lambda m: PHONE + "\n" * m.group().count("\n"), text)
     # 3. ФИО записи во всех формах; нет ФИО у записи — берём из шапки резюме
     latin = latin_name(text)
     if latin:

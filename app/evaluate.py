@@ -15,7 +15,7 @@ import hashlib
 import json
 import re
 import threading
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import Literal
 
@@ -64,7 +64,8 @@ CHANGE = {
 DISCRIMINATORY_RE = re.compile(
     r"возраст|\bлет\s+до\b|\bдо\s+\d{2}\s+лет|\bот\s+\d{2}\s+до\s+\d{2}\s+лет|моложе|старше\s+\d"
     r"|мужчин|женщин|\bпол\b|национальн|славян|внешност|семейн|замуж|женат|без\s+детей"
-    r"|\bдет(?:и|ей)\b|беремен|прописк",
+    r"|\bдет(?:и|ей)\b|беремен|прописк|\b\d{2}\s*[–—-]\s*\d{2}\s*лет|девушк|\bпар(?:ень|ни|ня)\b"
+    r"|молод(?:ой|ая|ые|ых|ого|ому|ым|ую)\b|холост",
     re.IGNORECASE,
 )
 VAGUE_RE = re.compile(
@@ -281,6 +282,8 @@ def plan(
     todo = []
     for cid in ordered:
         c = session.get(Candidate, cid)
+        if c is None:  # кандидата удалили или id не из базы — пропускаем
+            continue
         m = matches.get(cid)
         if m and m.decision == "reject":
             continue
@@ -498,6 +501,8 @@ def score(checks: list[dict]) -> int:
     «нет» или подтверждённое «чего точно не надо» — не выше 30."""
     counted = [ch for ch in checks if ch["kind"] in ("must", "nice")]
     total = sum(ch["weight"] for ch in counted)
+    if not total:  # требования удалили, пока оценка стояла в очереди
+        return 0
     value = round(100 * sum(ch["weight"] * VALUES[ch["verdict"]] for ch in counted) / total)
     return min(value, CAP) if vetoed(checks) else value
 
@@ -567,6 +572,8 @@ def evaluate_one(llm, session: Session, v: Vacancy, c: Candidate) -> dict:
     text = model_text(c)
     if len(text.strip()) < MIN_CHARS:
         raise LLMError("в резюме нет текста")
+    if not scored(v):
+        raise LLMError("у вакансии нет требований, оценивать не по чему")
     answer = llm.complete_structured(Evaluation, SYSTEM_EVAL, prompt(session, v, c, text))
     checks = checked(answer, used(v), text)
     concerns = []
@@ -577,6 +584,7 @@ def evaluate_one(llm, session: Session, v: Vacancy, c: Candidate) -> dict:
         "status": "ok",
         "error": None,
         "checks": checks,
+        "raw_checks": [ch.model_dump() for ch in answer.checks],
         "score": score(checks),
         "reasons": reasons(checks),
         "concerns": concerns,
@@ -596,7 +604,9 @@ def start(session: Session, v: Vacancy, limit: int, ids: list[int] | None = None
     не оплачивает прогон дважды."""
     with _start_lock:
         live = session.scalars(
-            select(Job).where(Job.kind == "evaluate", Job.status.in_(("queued", "running")))
+            select(Job).where(
+                Job.kind == "evaluate", Job.status.in_(("queued", "running", "paused"))
+            )
         )
         if job := next((j for j in live if j.payload.get("vacancy_id") == v.id), None):
             return job
@@ -641,33 +651,47 @@ def run_evaluate(job_id: int) -> None:
         job.status, job.total = "running", len(todo) + job.progress
         session.commit()
         errors = job.error.splitlines() if job.error else []
+        known = {c.id for c, _ in todo} | set(ranks)
+        errors += [
+            f"{cid}: такого кандидата в базе нет"
+            for cid in job.payload.get("ids") or []
+            if cid not in known and session.get(Candidate, cid) is None
+        ]
+        job.error = "\n".join(errors) or None
         with ThreadPoolExecutor(PARALLEL) as ex:
             for i in range(0, len(todo), BATCH):
                 session.refresh(job)
                 if stopping.is_set() or job.status == "paused":
                     return
-                part = todo[i : i + BATCH]
-                results = list(ex.map(lambda item: _attempt(llm, v, item[0]), part))
-                if auth := next((r for r in results if isinstance(r, AuthError)), None):
-                    job.status, job.error = "failed", str(auth)
-                    job.finished_at = datetime.now()
-                    session.commit()
-                    return
-                for (c, reason), result in zip(part, results, strict=True):
+                futures = {ex.submit(_attempt, llm, v, c): (c, r) for c, r in todo[i : i + BATCH]}
+                # Каждый ответ сохраняется, как только пришёл: после сбоя или остановки
+                # оплаченные оценки не пропадают и повторно не отправляются.
+                for future in as_completed(futures):
+                    c, reason = futures[future]
+                    result = future.result()
+                    if isinstance(result, AuthError):
+                        for other in futures:
+                            other.cancel()
+                        job.status, job.error = "failed", str(result)
+                        job.finished_at = datetime.now()
+                        session.commit()
+                        return
                     if isinstance(result, Exception):
                         errors.append(f"{c.id}: {result}")
                         result = {"status": "failed", "error": str(result)}
                     _save(session, v, c, reason, result, llm.model)
                     session.get(Match, (v.id, c.id)).rank = ranks.get(c.id)
-                job.progress += len(part)
-                job.error = "\n".join(errors) or None
-                job.payload = {
-                    **job.payload,
-                    "tokens_in": job.payload.get("tokens_in", 0) + llm.tokens_in,
-                    "tokens_out": job.payload.get("tokens_out", 0) + llm.tokens_out,
-                }
-                llm.tokens_in = llm.tokens_out = 0
-                session.commit()
+                    job.progress += 1
+                    job.error = "\n".join(errors) or None
+                    with llm._lock:
+                        spent = llm.tokens_in, llm.tokens_out
+                        llm.tokens_in = llm.tokens_out = 0
+                    job.payload = {
+                        **job.payload,
+                        "tokens_in": job.payload.get("tokens_in", 0) + spent[0],
+                        "tokens_out": job.payload.get("tokens_out", 0) + spent[1],
+                    }
+                    session.commit()
         job.status, job.finished_at = "done", datetime.now()
         session.commit()
 

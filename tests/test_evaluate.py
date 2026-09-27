@@ -541,3 +541,48 @@ def test_maybe_needs_at_least_half_of_must_requirements():
     assert ev.score(half) >= ev.MAYBE_FROM and category_of(half) == ev.MAYBE
     below_half = _checks(["partial", "no_data", "no_data"], ["met"] * 4)
     assert category_of(below_half) == ev.UNFIT
+
+
+def test_crash_mid_batch_keeps_paid_evaluations(session, base, mock, monkeypatch):
+    """Правка ревью этапа 3, №4: сбой на третьем ответе (как SIGKILL) — два оплаченных
+    ответа уже сохранены, после перезапуска в модель уходит только третий кандидат."""
+    v, p = base
+    mock(standard(v, p))
+    monkeypatch.setattr(ev, "PARALLEL", 1)
+    saved, original = [], ev._save
+
+    def crash_on_third(*args):
+        saved.append(args[2].id)
+        if len(saved) == 3:
+            raise RuntimeError("процесс убит")
+        return original(*args)
+
+    monkeypatch.setattr(ev, "_save", crash_on_third)
+    job = run(session, v)
+    assert job.status == "failed"
+    assert len(matches(session, v)) == 2
+    monkeypatch.setattr(ev, "_save", original)
+    job.status = "running"  # перезапуск продолжает прерванную задачу
+    session.commit()
+    run_pending()
+    session.expire_all()
+    assert len(matches(session, v)) == 3
+    assert len(mock.calls) == 3 + 1
+
+
+def test_checkset_counts_raw_model_answers(session, base, mock):
+    """Правка ревью этапа 3, №10: счётчики набора проверки смотрят сырой ответ модели,
+    поэтому «есть» без строк и несуществующие строки видны, хотя код их уже отбросил."""
+    import importlib
+
+    checkset = importlib.import_module("ev" + "al.run")
+    v, p = base
+    items = standard(v, p)
+    items[0]["response"]["checks"][0]["evidence_lines"] = None  # r1 «есть» без строк
+    items[1]["response"]["checks"][0]["evidence_lines"] = [90, 95]  # строк нет
+    mock(items)
+    run(session, v)
+    gromov = matches(session, v)["Громов"]
+    assert gromov.checks[0]["verdict"] == "no_data"  # код очистил
+    stats = checkset.check_evidence(session)
+    assert stats["«есть» без строк"] == 1 and stats["строк нет в резюме"] == 1

@@ -1,5 +1,6 @@
 """Экраны «Вакансии», «Новая вакансия», карточка вакансии и «Результат по вакансии»."""
 
+import math
 from datetime import date
 from urllib.parse import quote
 
@@ -35,10 +36,23 @@ def _vacancy(s, vacancy_id: int) -> Vacancy:
 
 
 def _number(value) -> float | None:
+    """Число из поля формы; пусто или не число — None; «inf», «1e999» — ответ 400."""
     try:
-        return float(str(value).replace(" ", "").replace("\xa0", "").replace(",", "."))
+        number = float(str(value).replace(" ", "").replace("\xa0", "").replace(",", "."))
     except ValueError:
         return None
+    if not math.isfinite(number):
+        raise HTTPException(400, "Укажите обычное число, например 3 или 150 000.")
+    return number
+
+
+def _candidate_id(form) -> int | None:
+    value = str(form.get("candidate_id", "")).strip()
+    if not value:
+        return None
+    if not value.isdigit():
+        raise HTTPException(400, "Не понял, о каком кандидате речь: обновите страницу.")
+    return int(value)
 
 
 def _filters(form) -> dict:
@@ -323,7 +337,7 @@ async def decision(request: Request, vacancy_id: int):
     form = await request.form()
     value = str(form.get("decision", ""))
     with db.SessionLocal() as s:
-        m = s.get(Match, (vacancy_id, int(form.get("candidate_id", 0))))
+        m = s.get(Match, (vacancy_id, _candidate_id(form) or 0))
         if not m:
             raise HTTPException(404)
         m.decision = value if value in DECISIONS else None
@@ -347,7 +361,7 @@ async def feedback(request: Request, vacancy_id: int):
     with db.SessionLocal() as s:
         _vacancy(s, vacancy_id)
         f = Feedback(
-            candidate_id=int(form["candidate_id"]) if form.get("candidate_id") else None,
+            candidate_id=_candidate_id(form),
             vacancy_id=vacancy_id if scope == "vacancy" else None,
             target=str(form.get("target", "reason"))
             if form.get("target") in ("reason", "concern", "field")
@@ -371,7 +385,8 @@ async def feedback_delete(request: Request, feedback_id: int):
             s.delete(f)
             s.commit()
     back = str(form.get("back", "/vacancies"))
-    return RedirectResponse(back if back.startswith("/") else "/vacancies", status_code=303)
+    safe = back.startswith("/") and not back.startswith("//") and "\\" not in back
+    return RedirectResponse(back if safe else "/vacancies", status_code=303)
 
 
 @router.post("/vacancies/{vacancy_id}/notice")

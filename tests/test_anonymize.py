@@ -225,3 +225,21 @@ def test_line_range_checked_against_text():
     assert valid_lines([1, 1], text) is None  # одни плейсхолдеры — не факт
     assert valid_lines([3, 3], text) is None
     assert valid_lines(None, text) is None and valid_lines(["x", 2], text) is None
+
+
+def test_contact_line_is_not_evidence():
+    """Правка ревью этапа 3, №3: строка из меток и подписей контактов — не опора."""
+    text = "[ИМЯ]\nТел.: [ТЕЛЕФОН], [ПОЧТА]\nНачальник цеха литья, 2019 — 2024"
+    assert valid_lines([2, 2], text) is None
+    assert valid_lines([3, 3], text) == [3, 3]
+    assert valid_lines([2, 3], text) == [2, 3]  # в диапазоне есть настоящая опора
+
+
+def test_phone_split_by_line_break_and_age_are_masked():
+    """Правка ревью этапа 3, №11: номер, разорванный переносом, и «Мне 45 лет»."""
+    text = "Иванов Иван\nТел.: +7 (912)\n345-67-89\nМне 45 лет, опыт 10 лет"
+    for phones in (["+79123456789"], []):
+        result = anonymize(text, "Иванов Иван", phones, [])
+        assert result.count("\n") == text.count("\n")  # строки на месте
+        assert "912" not in result and "345-67" not in result, result
+        assert "45 лет" not in result and "опыт 10 лет" in result
