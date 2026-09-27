@@ -142,22 +142,50 @@ def merge_exact_duplicates(session: Session) -> int:
         if len(group) < 2:
             continue
         group.sort(key=freshness, reverse=True)
-        main, older = group[0], group[1:]
-        for old in older:
-            snapshot = absorb(session, main, old)
-            session.add(
-                Duplicate(
-                    candidate_a=main.id,
-                    candidate_b=old.id,
-                    confidence=1.0,
-                    status="merged",
-                    snapshot=snapshot,
-                )
+        # Склейка по цепочке («Иванов Иван Петрович» — «Иванов Иван» — «Иванов Иван
+        # Павлович») не должна объединить несовместимых: группа делится на части, где
+        # ФИО совместимы попарно, а между частями — пара «Похоже на дубль».
+        parts: list[list[Candidate]] = []
+        for c in group:
+            home = next(
+                (
+                    part
+                    for part in parts
+                    if all(names_compatible(c.full_name, o.full_name) for o in part)
+                ),
+                None,
             )
-            merged += 1
+            if home is None:
+                parts.append([c])
+            else:
+                home.append(c)
+        for other in parts[1:]:
+            pair = frozenset((parts[0][0].id, other[0].id))
+            if pair not in seen:
+                seen.add(pair)
+                session.add(
+                    Duplicate(candidate_a=parts[0][0].id, candidate_b=other[0].id, confidence=0.5)
+                )
+        merged += sum(_absorb_part(session, part) for part in parts)
     _queue_body_matches(session)
     session.commit()
     return merged
+
+
+def _absorb_part(session: Session, part: list[Candidate]) -> int:
+    main, older = part[0], part[1:]
+    for old in older:
+        snapshot = absorb(session, main, old)
+        session.add(
+            Duplicate(
+                candidate_a=main.id,
+                candidate_b=old.id,
+                confidence=1.0,
+                status="merged",
+                snapshot=snapshot,
+            )
+        )
+    return len(older)
 
 
 def _people(group: list[Candidate]) -> int:

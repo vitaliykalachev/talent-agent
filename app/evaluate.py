@@ -424,6 +424,24 @@ def model_text(c: Candidate) -> str:
     return anonymize(c.raw_text[:MAX_CHARS], c.full_name, c.phones, c.emails, c.links)
 
 
+SENTENCE_RE = re.compile(r"(?<=[.!?;])\s+|\n+")
+
+
+def fair_description(v: Vacancy) -> str:
+    """Описание без предложений про возраст, пол, семью и т. п.: модель оценки не должна
+    их видеть. Вырезается предложение, где срабатывает DISCRIMINATORY_RE или стоит
+    требование, помеченное как дискриминационное."""
+    flagged = [r["name"].lower() for r in v.requirements if r.get("flag") == "discriminatory"]
+    kept = [
+        part
+        for part in SENTENCE_RE.split(v.description or "")
+        if part.strip()
+        and not DISCRIMINATORY_RE.search(part)
+        and not any(name in part.lower() for name in flagged)
+    ]
+    return " ".join(kept)
+
+
 def prompt(session: Session, v: Vacancy, c: Candidate, text: str) -> str:
     reqs = "\n".join(f"- {r['id']} [{KINDS[r['kind']].lower()}] {r['name']}" for r in used(v))
     corrections = [
@@ -432,7 +450,7 @@ def prompt(session: Session, v: Vacancy, c: Candidate, text: str) -> str:
     parts = [
         f"Вакансия {v.id}, кандидат {c.id}",
         f"Вакансия: {v.title}",
-        f"Описание вакансии:\n{v.description}",
+        f"Описание вакансии:\n{fair_description(v)}",
         f"Требования:\n{reqs}",
     ]
     if corrections:

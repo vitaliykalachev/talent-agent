@@ -488,6 +488,23 @@ def test_discriminatory_requirement_not_sent_to_model_nor_scored(session, base, 
     assert gromov.score == 100
 
 
+def test_discriminatory_sentence_of_description_not_sent_to_model(session, base, mock):
+    """Правка ревью этапа 3, №1: «мужчина до 35 лет, без детей» из описания вакансии
+    не доходит до модели оценки, остальное описание доходит."""
+    v, p = base
+    v.description = (
+        "Начальник цеха литья под давлением. Мужчина до 35 лет, без детей. "
+        "Желательно бережливое производство."
+    )
+    session.commit()
+    mock(standard(v, p))
+    run(session, v)
+    assert mock.calls
+    for text in mock.calls:
+        assert "Мужчина до 35 лет" not in text and "без детей" not in text
+        assert "Желательно бережливое производство." in text
+
+
 def test_guard_nothing_personal_reaches_model(session, base, mock):
     v, p = base
     mock(standard(v, p))

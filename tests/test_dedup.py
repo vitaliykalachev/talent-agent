@@ -148,3 +148,21 @@ def test_contact_of_three_names_is_not_identifying(tmp_path, do_import, active, 
     )
     assert len(active()) == 4
     assert session.scalar(select(Duplicate)) is None
+
+
+def test_chain_through_short_name_does_not_merge_incompatible(tmp_path, do_import, session):
+    """Правка ревью этапа 3, №2: «Иванов Иван Петрович» и «Иванов Иван Павлович» с общим
+    телефоном не склеиваются транзитивно через «Иванов Иван»."""
+    do_import(
+        csv(
+            tmp_path,
+            ["1", "Иванов Иван Петрович", "8 912 345-67-89", "", "", "", "01.08.2026"],
+            ["2", "Иванов Иван", "8 912 345-67-89", "", "", "", "01.05.2026"],
+            ["3", "Иванов Иван Павлович", "8 912 345-67-89", "", "", "", "01.02.2026"],
+        )
+    )
+    active = list(session.scalars(select(Candidate).where(Candidate.duplicate_of.is_(None))))
+    names = sorted(c.full_name for c in active)
+    assert names == ["Иванов Иван Павлович", "Иванов Иван Петрович"]
+    pair = session.scalar(select(Duplicate).where(Duplicate.status == "open"))
+    assert {pair.candidate_a, pair.candidate_b} == {c.id for c in active}
