@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ v.title or "Вакансия" }} · Кадровый агент{% endblock %}
 {% block content %}
-<p><a href="/vacancies">← Все вакансии</a></p>
+<p class="back"><a href="/vacancies">← Все вакансии</a></p>
 <div class="headline">
   <h1>{{ v.title or "Без названия" }}</h1>
   {% if evaluated %}<a class="button ghost" href="/vacancies/{{ v.id }}/results">Результат по вакансии</a>{% endif %}

@@ -17,6 +17,7 @@ from app import db
 from app.importer.dedup import find_possible, merge_exact_duplicates
 from app.importer.mapping import guess_mapping
 from app.importer.normalize import (
+    email_key,
     extract_birth_year,
     extract_city,
     extract_emails,
@@ -25,6 +26,7 @@ from app.importer.normalize import (
     find_name,
     is_stale,
     looks_like_name,
+    names_compatible,
     normalize_city,
     normalize_name,
     parse_date,
@@ -94,9 +96,15 @@ def new_batch(session: Session, table: Path | None, docs: list[Path]) -> ImportB
     return batch
 
 
-def start_import(session: Session, batch: ImportBatch, fields: list[str]) -> Job:
+def start_import(
+    session: Session, batch: ImportBatch, fields: list[str], skip_nameless: bool = False
+) -> Job:
+    """Задача импорта; skip_nameless — строки без ФИО не загружать («Пропустить»)."""
     batch.mapping = list(fields)
-    job = enqueue(session, "import", {"batch_id": batch.id})
+    payload = {"batch_id": batch.id}
+    if skip_nameless:
+        payload["skip_nameless"] = True
+    job = enqueue(session, "import", payload)
     session.commit()
     return job
 
@@ -124,46 +132,104 @@ def split_contacts(text: str) -> tuple[list[str], list[str], list[str]]:
     return phones, emails, list(dict.fromkeys(extra))
 
 
-def process_row(
-    session: Session, headers: list[str], fields: list[str], row: list, batch_id: int | None = None
-) -> None:
+def read_row(headers: list[str], fields: list[str], row: list) -> dict:
+    """Строка выгрузки → значения по полям, текст резюме и то, по чему человека узнать:
+    ФИО, телефоны и почта. Колонки «не использовать» не попадают никуда, в том числе
+    в текст, который уходит модели."""
     values: dict[str, list] = {}
     lines = []
     for header, field, value in zip(headers, fields, row, strict=False):
-        if value is None or not str(value).strip():
+        if not field or value is None or not str(value).strip():
             continue
-        if field:
-            values.setdefault(field, []).append(value)
+        values.setdefault(field, []).append(value)
         if field not in ("resume_text", "resume_file"):
             shown = value.strftime("%d.%m.%Y") if isinstance(value, datetime) else value
             lines.append(f"{header}: {shown}")
     resume = "\n\n".join(str(v) for v in values.get("resume_text", []))
-    raw_text = "\n".join(lines) + (f"\n\n{resume}" if resume else "")
-
     first = {k: v[0] for k, v in values.items()}
     name = first.get("full_name") or " ".join(
         str(first[k]) for k in ("last_name", "first_name", "middle_name") if k in first
     )
-    resume_date = parse_date(first.get("resume_date")) or extract_resume_date(resume)
     head_phones, head_emails, body = split_contacts(resume)
-    phones = list(dict.fromkeys(extract_phones(_joined(values.get("phone", []))) + head_phones))
-    emails = list(dict.fromkeys(extract_emails(_joined(values.get("email", []))) + head_emails))
+    return {
+        "first": first,
+        "resume": resume,
+        "raw_text": "\n".join(lines) + (f"\n\n{resume}" if resume else ""),
+        "name": normalize_name(name),
+        "phones": list(
+            dict.fromkeys(extract_phones(_joined(values.get("phone", []))) + head_phones)
+        ),
+        "emails": list(
+            dict.fromkeys(extract_emails(_joined(values.get("email", []))) + head_emails)
+        ),
+        "body": body,
+    }
+
+
+def nobody(row: dict) -> bool:
+    """Строку не с кем связать: нет ни ФИО, ни телефона, ни почты, ни резюме — пропускаем."""
+    first = row["first"]
+    return not (row["name"] or row["phones"] or row["emails"] or row["resume"]) and (
+        "resume_file" not in first
+    )
+
+
+def preview(session: Session, headers: list[str], fields: list[str], rows: list) -> dict:
+    """«Что получится» до загрузки: сколько кандидатов загрузим, сколько строк пропустим,
+    в скольких нет ФИО и сколько точных дублей объединим (общий телефон или почта и
+    совместимое ФИО — с базой или с другой строкой файла)."""
+    holders: dict[str, list[str | None]] = {}
+    for c in session.scalars(select(Candidate).where(Candidate.duplicate_of.is_(None))):
+        for key in {*c.phones, *map(email_key, c.emails)}:
+            holders.setdefault(key, []).append(c.full_name)
+    load = skip = nameless = duplicates = 0
+    for raw in rows:
+        row = read_row(headers, fields, raw)
+        if nobody(row):
+            skip += 1
+            continue
+        load += 1
+        nameless += not row["name"]
+        keys = {*row["phones"], *map(email_key, row["emails"])}
+        if any(names_compatible(row["name"], n) for k in keys for n in holders.get(k, [])):
+            duplicates += 1
+        for key in keys:
+            holders.setdefault(key, []).append(row["name"])
+    return {"load": load, "skip": skip, "nameless": nameless, "duplicates": duplicates}
+
+
+def process_row(
+    session: Session,
+    headers: list[str],
+    fields: list[str],
+    row: list,
+    batch_id: int | None = None,
+    skip_nameless: bool = False,
+) -> bool:
+    """Добавляет кандидата из строки; False — строку пропустили."""
+    found = read_row(headers, fields, row)
+    if nobody(found) or (skip_nameless and not found["name"]):
+        return False
+    first, resume = found["first"], found["resume"]
+    resume_date = parse_date(first.get("resume_date")) or extract_resume_date(resume)
+    phones, emails = found["phones"], found["emails"]
     session.add(
         Candidate(
             batch_id=batch_id,
             external_id=str(first["external_id"]).strip() if "external_id" in first else None,
-            raw_text=raw_text,
+            raw_text=found["raw_text"],
             source_file=str(first["resume_file"]).strip() if "resume_file" in first else None,
-            full_name=normalize_name(name),
+            full_name=found["name"],
             phones=phones,
             emails=emails,
-            body_contacts=[c for c in body if c not in {*phones, *emails}],
+            body_contacts=[c for c in found["body"] if c not in {*phones, *emails}],
             city=normalize_city(first.get("city")) or extract_city(resume),
             birth_year=parse_year(first.get("birth")) or extract_birth_year(resume),
             resume_date=resume_date,
             stale=is_stale(resume_date),
         )
     )
+    return True
 
 
 def _unique(session: Session, *conditions) -> Candidate | None:
@@ -252,6 +318,8 @@ def run_import(job_id: int) -> None:
         docs = documents(batch)
         job.status = "running"
         job.total = batch.rows_total = len(rows) + len(docs)
+        job.payload = {**job.payload, "rows": len(rows), "files": len(docs)}
+        skip_nameless = bool(job.payload.get("skip_nameless"))
         session.commit()
 
         errors = job.error.splitlines() if job.error else []
@@ -261,8 +329,9 @@ def run_import(job_id: int) -> None:
             end = min(job.progress + CHUNK, job.total)
             for i in range(job.progress, end):
                 if i < len(rows):
-                    process_row(session, headers, batch.mapping, rows[i], batch.id)
-                    batch.rows_ok += 1
+                    batch.rows_ok += process_row(
+                        session, headers, batch.mapping, rows[i], batch.id, skip_nameless
+                    )
                 elif error := process_document(session, docs[i - len(rows)], batch.id):
                     errors.append(error)
                 else:

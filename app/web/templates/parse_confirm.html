@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Разбор резюме · Кадровый агент{% endblock %}
 {% block content %}
-<p><a href="/">← На главную</a></p>
+<p class="back"><a href="/">← На главную</a></p>
 <h1>{% if scope == "trial" %}Пробный разбор{% elif scope == "retry" %}Разобрать ещё раз{% else %}Разбор всей базы{% endif %}</h1>
 {% if est.count %}
 <div class="card confirm">

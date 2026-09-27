@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Похоже на дубль · Кадровый агент{% endblock %}
 {% block content %}
-<p><a href="/">← Главная</a></p>
+<p class="back"><a href="/">← Главная</a></p>
 <h1>Похоже на дубль: {{ rows|length }}</h1>
 <p class="sub">Записи похожи, но сами мы их не объединяем: решите по каждой паре. <a href="/duplicates/merged">Объединённые автоматически</a></p>
 {% if rows %}

@@ -18,6 +18,7 @@ FIELDS = {
     "city": "Город",
     "position": "Должность",
     "company": "Компания",
+    "salary": "Зарплата",
     "birth": "Дата или год рождения",
     "resume_date": "Дата резюме",
     "resume_text": "Текст резюме",
@@ -40,6 +41,7 @@ NAME_RULES = [
     ("city", ["город", "населенный пункт", "city", "место жительства"]),
     ("position", ["должность", "позиция", "position", "title"]),
     ("company", ["компания", "работодатель", "место работы", "организация", "company"]),
+    ("salary", ["зарплата", "зп", "оклад", "ожидания", "доход", "salary"]),
 ]
 
 
@@ -52,7 +54,8 @@ def _pattern(p: str) -> str:
     return rf"\b{re.escape(p[:-1])}\w*" if p.endswith("*") else rf"\b{re.escape(p)}\b"
 
 
-def _by_name(header: str) -> str:
+def by_name(header: str) -> str:
+    """Поле по названию колонки; пусто — по названию не понять."""
     text = _clean(header)
     for field, patterns in NAME_RULES:
         if any(re.search(_pattern(p), text) for p in patterns):
@@ -85,7 +88,7 @@ def _by_content(values: list) -> str:
 
 def guess_mapping(headers: list[str], rows: list[list]) -> list[str]:
     """Возвращает поле для каждой колонки; пустая строка — колонку не использовать."""
-    fields = [_by_name(h) for h in headers]
+    fields = [by_name(h) for h in headers]
     taken = {f for f in fields if f}
     sample = rows[:50]
     for i, field in enumerate(fields):
@@ -96,3 +99,11 @@ def guess_mapping(headers: list[str], rows: list[list]) -> list[str]:
             fields[i] = guess
             taken.add(guess)
     return fields
+
+
+def confidence(header: str, field: str) -> str:
+    """Метка догадки для экрана колонок: по названию — «совпадает», по содержимому или
+    выбрано руками — «проверьте», поле не выбрано — «не понял — выберите»."""
+    if not field:
+        return "не понял — выберите"
+    return "совпадает" if by_name(header) == field else "проверьте"

@@ -4,7 +4,7 @@
 <dt>{{ label }}</dt><dd{% if key in same %} class="same"{% endif %}>{{ value }}</dd>
 {% endmacro %}
 {% block content %}
-<p><a href="/duplicates">← Все пары ({{ waiting }})</a></p>
+<p class="back"><a href="/duplicates">← Все пары ({{ waiting }})</a></p>
 <h1>Похоже на дубль</h1>
 {% if dup.status == "rejected" %}<div class="callout"><p>Вы отметили: это разные люди. Пара больше не предлагается.</p></div>{% endif %}
 <p class="lead">Почему похожи: {{ reason }}.</p>

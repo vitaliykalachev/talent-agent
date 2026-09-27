@@ -31,6 +31,38 @@ def plural(n: int, one: str, few: str, many: str) -> str:
     return {1: one, 2: few, 3: few, 4: few}.get(n % 10, many)
 
 
+def count(n: int, one: str, few: str, many: str) -> str:
+    """Число со словом в нужной форме: «1 кандидат», «3 записи», «35 000 файлов»."""
+    return f"{num(n)}{NBSP}{plural(int(n), one, few, many)}"
+
+
+def years(value) -> str:
+    """Стаж словами: «1 год», «3 года», «11,5 года», «20 лет»."""
+    if value is None:
+        return "—"
+    text = f"{value:g}".replace(".", ",")
+    if float(value) != int(value):
+        return f"{text}{NBSP}года"
+    return f"{text}{NBSP}{plural(int(value), 'год', 'года', 'лет')}"
+
+
+def phone(value: str) -> str:
+    """«+79120000000» → «+7 912 000-00-00»; другие страны — как есть."""
+    if value and len(value) == 12 and value.startswith("+7"):
+        d = value[2:]
+        return f"+7{NBSP}{d[:3]}{NBSP}{d[3:6]}-{d[6:8]}-{d[8:]}"
+    return value
+
+
+def cut(text: str | None, limit: int) -> str:
+    """Обрезка по слову с многоточием: не «техническому перев», а «техническому…»."""
+    text = " ".join((text or "").split())
+    if len(text) <= limit:
+        return text
+    head = text[: limit + 1].rsplit(" ", 1)[0] if " " in text[:limit] else text[:limit]
+    return head.rstrip(" ,.;:—-") + "…"
+
+
 def duration(low: float, high: float, after_verb: bool = False) -> str:
     """«3–4 часа», «10–20 минут», «меньше минуты»; after_verb — после «займёт»:
     «займёт 1 минуту», а не «1 минута»."""
@@ -57,7 +89,14 @@ def rub_range(low: float, high: float) -> str:
     return f"{money(low)}–{money(high)}{NBSP}₽"
 
 
+def failed_all(job: Job) -> bool:
+    """Задача дошла до конца, но ничего не получилось: каждый элемент — в списке проблем."""
+    return job.status == "done" and bool(job.error) and len(problems(job)) >= job.total
+
+
 def job_status(job: Job) -> str:
+    if failed_all(job):
+        return "Не получилось"
     if job.status == "done":
         return "Готово, есть проблемы" if job.error else "Готово"
     return {
@@ -80,6 +119,27 @@ def problem_summary(job: Job) -> str:
     reasons = Counter(reason for _, reason in items)
     parts = ", ".join(f"{num(n)} — {reason}" for reason, n in reasons.most_common())
     return f"{num(len(items))} не получилось: {parts}"
+
+
+def import_done(job: Job) -> str:
+    """Итог загрузки: «30 строк и 5 файлов» — что именно прочитали."""
+    rows, files = job.payload.get("rows"), job.payload.get("files")
+    if rows is None:
+        return f"{num(job.progress)} из {num(job.total)}"
+    ok_files = files - len(problems(job))
+    parts = []
+    if rows:
+        parts.append(count(rows, "строка", "строки", "строк"))
+    if files:
+        parts.append(count(ok_files, "файл", "файла", "файлов"))
+    return " и ".join(parts) or "файл пустой"
+
+
+def network_errors(job: Job) -> bool:
+    """Есть ли среди причин сетевые сбои: только тогда пишем, что агент их повторил."""
+    from app.llm import BUSY_MESSAGE
+
+    return any(reason == BUSY_MESSAGE for _, reason in problems(job))
 
 
 def remaining(job: Job) -> str:

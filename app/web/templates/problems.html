@@ -1,9 +1,9 @@
 {% extends "base.html" %}
 {% block title %}Что не получилось · Кадровый агент{% endblock %}
 {% block content %}
-<p><a href="/">← На главную</a></p>
+<p class="back"><a href="/">← На главную</a></p>
 <h1>Что не получилось</h1>
-<p class="sub">{{ job|job_status }}: {{ rows|length|num }} {{ "записей" if job.kind == "parse" else "файлов" }}.</p>
+<p class="sub">{{ job|job_status }}: {{ rows|length|count("запись", "записи", "записей") if job.kind == "parse" else rows|length|count("файл", "файла", "файлов") }}.</p>
 <div class="tablewrap">
 <table class="stack">
   <thead><tr><th>{{ "Кандидат" if job.kind == "parse" else "Файл" }}</th><th>Причина</th></tr></thead>

@@ -20,7 +20,7 @@
 {% endmacro %}
 
 {% block content %}
-<p><a href="/candidates">← Все кандидаты</a></p>
+<p class="back"><a href="/candidates">← Все кандидаты</a></p>
 {% set title, company = c|current_job %}
 <h1>{{ c.full_name or "Без имени" }}</h1>
 <p class="sub">

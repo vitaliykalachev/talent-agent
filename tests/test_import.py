@@ -206,14 +206,21 @@ def test_csv_with_multiline_resume_cells(tmp_path, do_import, active):
     assert anna.full_name == "Белова Анна"
 
 
-def test_unmapped_columns_kept_in_raw_text(tmp_path, do_import, active):
+def test_unused_columns_never_reach_text_or_model(tmp_path, do_import, active):
+    """Аудит №2: колонка «не использовать» (внутренняя пометка рекрутера) не попадает ни
+    в текст резюме, ни в то, что уходит модели."""
+    from app.parse import model_input
+
     path = tmp_path / "crm.csv"
     path.write_text(
-        "ID;ФИО;Описание\n1;Орлов Пётр;Сильный технолог, рекомендовал директор\n", encoding="utf-8"
+        "ID;ФИО;Должность;Комментарий рекрутера\n1;Орлов Пётр;Технолог;хороший, но дорогой\n",
+        encoding="utf-8",
     )
-    do_import(path, mapping=["external_id", "full_name", ""])
+    do_import(path, mapping=["external_id", "full_name", "position", ""])
     (petr,) = active()
-    assert "Описание: Сильный технолог, рекомендовал директор" in petr.raw_text
+    assert "Должность: Технолог" in petr.raw_text
+    assert "дорогой" not in petr.raw_text and "Комментарий" not in petr.raw_text
+    assert "дорогой" not in model_input(petr)
 
 
 def test_body_contacts_go_to_review_queue_not_merged(tmp_path, do_import, active, session):

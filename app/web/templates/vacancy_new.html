@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Новая вакансия · Кадровый агент{% endblock %}
 {% block content %}
-<p><a href="/vacancies">← Все вакансии</a></p>
+<p class="back"><a href="/vacancies">← Все вакансии</a></p>
 <h1>Новая вакансия</h1>
 {% if error %}<div class="callout stop"><p>{{ error }}</p></div>{% endif %}
 <form class="card settings" method="post" action="/vacancies/new">

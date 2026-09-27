@@ -4,6 +4,7 @@ import math
 import re
 import tempfile
 import time
+import zipfile
 from datetime import date
 from pathlib import Path
 
@@ -17,9 +18,10 @@ from starlette.datastructures import UploadFile
 from app import config, db, evaluate, mail, morning, parse, schedule
 from app.anonymize import anonymize
 from app.importer.dedup import auto_merged, open_pairs
-from app.importer.mapping import FIELDS
+from app.importer.mapping import FIELDS, confidence
 from app.importer.normalize import looks_like_name
-from app.importer.pipeline import documents, load_table, new_batch, start_import
+from app.importer.pipeline import documents, load_table, new_batch, preview, start_import
+from app.importer.readers import read_table
 from app.jobs import enqueue
 from app.llm import AuthError, get_llm
 from app.models import Candidate, Duplicate, Feedback, ImportBatch, Job, Match, NightRun, Vacancy
@@ -35,6 +37,12 @@ templates.env.filters["num"] = present.num
 templates.env.filters["job_status"] = present.job_status
 templates.env.filters["stale_label"] = present.stale_label
 templates.env.filters["batch_label"] = present.batch_label
+templates.env.filters["count"] = present.count
+templates.env.filters["years"] = present.years
+templates.env.filters["phone"] = present.phone
+templates.env.filters["cut"] = present.cut
+templates.env.filters["import_done"] = present.import_done
+templates.env.globals["network_errors"] = present.network_errors
 templates.env.globals["PARSE_STATUS"] = present.PARSE_STATUS
 templates.env.globals["problem_summary"] = present.problem_summary
 templates.env.globals["remaining"] = present.remaining
@@ -197,6 +205,36 @@ def upload_form(request: Request):
     return render(request, "upload.html", batches=batches, error=None, offer=offer)
 
 
+def _upload_error(request: Request, error: str) -> HTMLResponse:
+    with db.SessionLocal() as s:
+        batches = history(s)
+    return render(request, "upload.html", status_code=400, batches=batches, offer=None, error=error)
+
+
+def broken_file(table: Path | None, docs: list[Path]) -> str | None:
+    """Текст ошибки, если выгрузка или архив не открываются; None — всё читается.
+    Проверка идёт до создания загрузки, чтобы битый файл не оставлял пустую загрузку."""
+    if table:
+        try:
+            headers, rows = read_table(table)
+        except Exception:  # BadZipFile, InvalidFileException, битые XML внутри XLSX
+            return (
+                f"Файл «{table.name}» не открылся: он повреждён или это не Excel. "
+                "Сохраните выгрузку заново и загрузите ещё раз."
+            )
+        if not rows and not docs:
+            return (
+                f"В файле «{table.name}» нет строк с данными. Проверьте, что выгрузили нужный лист."
+            )
+    for path in docs:
+        if path.suffix.lower() == ".zip" and not zipfile.is_zipfile(path):
+            return (
+                f"Архив «{path.name}» не открылся: он повреждён или это не ZIP. "
+                "Упакуйте резюме заново и загрузите ещё раз."
+            )
+    return None
+
+
 @router.post("/upload")
 async def upload(request: Request):
     form = await request.form()
@@ -205,16 +243,7 @@ async def upload(request: Request):
     files = [f for f in files if isinstance(f, UploadFile) and f.filename]
     has_table = isinstance(table, UploadFile) and bool(table.filename)
     if not has_table and not files:
-        with db.SessionLocal() as s:
-            batches = history(s)
-        return render(
-            request,
-            "upload.html",
-            status_code=400,
-            batches=batches,
-            offer=None,
-            error="Выберите выгрузку из CRM или файлы резюме.",
-        )
+        return _upload_error(request, "Выберите выгрузку из CRM или файлы резюме.")
     incoming = db.data_dir / "incoming"
     incoming.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=incoming) as tmp:
@@ -231,7 +260,10 @@ async def upload(request: Request):
             if target.exists():
                 target = docs_dir / f"{Path(name).stem}_{i}{Path(name).suffix}"
             target.write_bytes(await f.read())
-        docs = [p for p in docs_dir.iterdir() if p.suffix.lower() == ".zip"] + [docs_dir]
+        loose = sorted(docs_dir.iterdir())
+        if error := broken_file(table_path, loose):
+            return _upload_error(request, error)
+        docs = [p for p in loose if p.suffix.lower() == ".zip"] + [docs_dir]
         with db.SessionLocal() as s:
             batch = new_batch(s, table_path, docs)
     return RedirectResponse(f"/upload/{batch.id}", status_code=303)
@@ -250,15 +282,18 @@ def batch_page(request: Request, batch_id: int):
             raise HTTPException(404)
         job = _batch_job(s, batch_id)
         offer = parse_offer(s) if job and job.status == "done" else None
-    headers, rows = load_table(batch)
+        headers, rows = load_table(batch)
+        outcome = None if job else preview(s, headers, batch.mapping, rows)
     columns = [
         {
             "index": i,
             "header": h,
-            "field": batch.mapping[i] if i < len(batch.mapping) else "",
+            "field": field,
+            "label": confidence(h, field),
             "examples": [str(r[i]) for r in rows[:3] if i < len(r) and r[i] not in (None, "")],
         }
         for i, h in enumerate(headers)
+        for field in [batch.mapping[i] if i < len(batch.mapping) else ""]
     ]
     return render(
         request,
@@ -270,7 +305,26 @@ def batch_page(request: Request, batch_id: int):
         docs_count=len(documents(batch)),
         fields=FIELDS,
         offer=offer,
+        outcome=outcome,
     )
+
+
+@router.post("/upload/{batch_id}/preview", response_class=HTMLResponse)
+async def batch_preview(request: Request, batch_id: int):
+    """«Что получится» заново, когда рекрутёр поменял значение колонки (HTMX)."""
+    form = await request.form()
+    with db.SessionLocal() as s:
+        batch = s.get(ImportBatch, batch_id)
+        if not batch:
+            raise HTTPException(404)
+        headers, rows = load_table(batch)
+        outcome = preview(s, headers, _fields(form, headers), rows)
+    return render(request, "batch_outcome.html", outcome=outcome, docs_count=len(documents(batch)))
+
+
+def _fields(form, headers: list[str]) -> list[str]:
+    fields = [str(form.get(f"col_{i}", "")) for i in range(len(headers))]
+    return [f if f in FIELDS else "" for f in fields]
 
 
 @router.post("/upload/{batch_id}/start")
@@ -282,8 +336,8 @@ async def batch_start(request: Request, batch_id: int):
             raise HTTPException(404)
         if not _batch_job(s, batch_id):
             headers, _ = load_table(batch)
-            fields = [str(form.get(f"col_{i}", "")) for i in range(len(headers))]
-            start_import(s, batch, [f if f in FIELDS else "" for f in fields])
+            skip = form.get("nameless") == "skip"
+            start_import(s, batch, _fields(form, headers), skip_nameless=skip)
     return RedirectResponse(f"/upload/{batch_id}", status_code=303)
 
 
