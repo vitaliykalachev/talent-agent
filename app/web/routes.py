@@ -815,6 +815,9 @@ async def settings_check(request: Request):
     form = await request.form()
     typed = {key: str(form.get(key, "")).strip() for key in CHECKED}
     provider = typed["llm_provider"] or config.get("llm_provider")
+    key = typed["llm_api_key"] or config.get("llm_api_key")
+    if key and provider == "mock" and config.has_recorded():  # как при «Сохранить»
+        provider = typed["llm_provider"] = "anthropic"
     if provider != "mock" and not (typed["llm_api_key"] or config.get("llm_api_key")):
         message = "Ключ доступа не задан: вставьте его в поле «Ключ доступа» и проверьте ещё раз."
         return _settings_page(request, message, error=True, typed=typed)

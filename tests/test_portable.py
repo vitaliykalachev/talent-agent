@@ -17,7 +17,7 @@ from app.jobs import run_pending
 from app.llm import MockLLM, get_llm
 from app.models import Vacancy
 from app.parse import start_parse, waiting_ids
-from app.web import present
+from app.web import present, routes
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -197,3 +197,25 @@ def test_own_resume_in_demo_lists_same_hint(web, session, do_import):
     assert job.status == "done" and all(r == DEMO_MISS for _, r in present.problems(job))
     page = web.get(f"/jobs/{job.id}/problems")
     assert page.status_code == 200 and page.text.count(DEMO_MISS) >= 2
+
+
+def test_check_with_key_in_demo_asks_real_service(web, monkeypatch):
+    """Ключ вставлен, а в скрытом «Сервисе» остался mock: проверяется настоящий сервис."""
+    config.save({"llm_provider": "mock", "llm_fixtures": config.RECORDED, **demo.REAL_SERVICE})
+    asked = []
+
+    class Stub:
+        retries = 1
+
+        def complete_structured(self, *_):
+            return None
+
+    def fake(purpose, overrides, timeout):
+        asked.append(overrides["llm_provider"])
+        return Stub()
+
+    monkeypatch.setattr(routes, "get_llm", fake)
+    form = {"llm_provider": "mock", "llm_api_key": "ключ", **demo.REAL_SERVICE}
+    text = web.post("/settings/check", data=form).text
+    assert asked == ["anthropic"] and "Подключение работает" in text
+    assert config.get("llm_provider") == "mock"  # проверка ничего не сохраняет
