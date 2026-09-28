@@ -25,7 +25,7 @@ from app.importer.normalize import looks_like_name
 from app.importer.pipeline import documents, load_table, new_batch, preview, start_import
 from app.importer.readers import read_table
 from app.jobs import enqueue
-from app.llm import AuthError, get_llm
+from app.llm import DEMO_MISS, AuthError, get_llm
 from app.models import Candidate, Duplicate, Feedback, ImportBatch, Job, Match, NightRun, Vacancy
 from app.search import Filters, search
 from app.web import present
@@ -46,6 +46,7 @@ templates.env.filters["cut"] = present.cut
 templates.env.filters["import_done"] = present.import_done
 templates.env.filters["settings_hint"] = present.settings_hint
 templates.env.globals["reasons"] = present.reasons
+templates.env.globals["DEMO_MISS"] = DEMO_MISS
 templates.env.globals["network_errors"] = present.network_errors
 templates.env.globals["PARSE_STATUS"] = present.PARSE_STATUS
 templates.env.globals["problem_summary"] = present.problem_summary
@@ -184,6 +185,7 @@ def home(request: Request):
         with_errors=with_errors,
         flow=flow,
         has_key=bool(config.get("llm_api_key")) or config.get("llm_provider") == "mock",
+        demo=config.get("llm_provider") == "mock" and not config.get("llm_api_key"),
     )
 
 
@@ -487,6 +489,7 @@ def job_problems(request: Request, job_id: int):
         if not job:
             raise HTTPException(404)
         rows = present.problems(job)
+        demo_miss = present.showcase(s) if any(r == DEMO_MISS for _, r in rows) else None
         names = {}
         if job.kind == "parse":
             ids = [int(what) for what, _ in rows if what.isdigit()]
@@ -495,7 +498,7 @@ def job_problems(request: Request, job_id: int):
                     select(Candidate.id, Candidate.full_name).where(Candidate.id.in_(ids))
                 ).all()
             )
-    return render(request, "problems.html", job=job, rows=rows, names=names)
+    return render(request, "problems.html", job=job, rows=rows, names=names, demo_miss=demo_miss)
 
 
 # ── Кандидаты ───────────────────────────────────────────────────────────────
@@ -757,11 +760,21 @@ def settings_form(request: Request):
     return _settings_page(request)
 
 
+REAL_ON = "Сохранено. Записанные ответы отключены, теперь работает настоящий сервис ИИ."
+RECORDED_ON = "Ключ удалён. Агент снова работает на записанных ответах, без интернета."
+
+
 @router.post("/settings", response_class=HTMLResponse)
 async def settings_save(request: Request):
-    error = _save_settings(await request.form())
+    form = await request.form()
+    error = _save_settings(form)
     if error:
         return _settings_page(request, error, error=True)
+    # Ключ вставили, а сервис остался «записанные ответы»: рекрутер ждёт настоящий сервис
+    key = str(form.get("llm_api_key", "")).strip()
+    if key and config.get("llm_provider") == "mock" and config.has_recorded():
+        config.save({"llm_provider": "anthropic"})
+        return _settings_page(request, REAL_ON)
     return _settings_page(request, "Сохранено.")
 
 
@@ -830,6 +843,9 @@ async def settings_check(request: Request):
 def settings_key_delete(request: Request):
     """«Удалить ключ»: пустое поле ключ не стирает, поэтому отдельная кнопка."""
     config.save({"llm_api_key": ""})
+    if config.has_recorded():  # демо: без ключа — обратно на записанные ответы
+        config.save({"llm_provider": "mock"})
+        return _settings_page(request, RECORDED_ON)
     if config.get("llm_api_key"):  # пустое значение в «Настройках» уступает переменной из .env
         message = (
             "Ключ из настроек удалён, но приложение берёт ключ из файла .env — уберите его оттуда."

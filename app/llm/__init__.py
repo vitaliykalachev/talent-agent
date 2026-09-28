@@ -39,6 +39,9 @@ class AuthError(LLMError):
 AUTH_MESSAGE = "Ключ доступа не подошёл. Проверьте, что скопировали его целиком."
 BUSY_MESSAGE = "сервис ИИ не ответил"
 NO_ANSWER = "ответ модели не получен"  # у записанных ответов нет ответа на этот запрос
+# То же в демо на записанных ответах: рекрутер ввёл свою вакансию или загрузил своё резюме.
+# Без «: » — список проблем задачи делит строку «что: почему» по последнему двоеточию.
+DEMO_MISS = "В демо-версии ИИ отключён — новые вакансии и резюме не разбираются"
 
 
 class LLM:
@@ -251,6 +254,7 @@ class MockLLM(LLM):
 
     def __init__(self, model: str, fixtures: str | Path):
         super().__init__(model)
+        self.demo = Path(fixtures).resolve() == config.RECORDED_DIR.resolve()
         self.fixtures = []
         for path in sorted(Path(fixtures).glob("*.json")):
             data = json.loads(path.read_text("utf-8"))
@@ -271,7 +275,7 @@ class MockLLM(LLM):
             found.sort(key=lambda i: "schema" not in self.fixtures[i])
             index = found[0] if found else None
             if index is None:  # на экране — без служебных подробностей записи
-                raise LLMError(NO_ANSWER)
+                raise LLMError(DEMO_MISS if self.demo else NO_ANSWER)
             fixture = self.fixtures[index]
             answers = fixture.get("responses") or [fixture["response"]]
             answer = answers[min(self.served[index], len(answers) - 1)]
