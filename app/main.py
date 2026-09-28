@@ -162,7 +162,9 @@ def run() -> None:
         sys.exit(f"Порты {wanted}–{wanted + PORTS - 1} заняты. Закройте другие копии агента.")
     os.environ.setdefault("TA_PUBLIC_URL", f"http://127.0.0.1:{port}")  # ссылки в письме
     threading.Thread(target=announce, args=(port, open_browser), daemon=True).start()
-    uvicorn.run(create_app(), host=host, port=port)
+    # Портативный режим: клик в окно консоли Windows включает выделение и блокирует
+    # вывод, а с ним и сервер; строка на каждый запрос делала это вероятным.
+    uvicorn.run(create_app(), host=host, port=port, access_log=not open_browser)
 
 
 if __name__ == "__main__":

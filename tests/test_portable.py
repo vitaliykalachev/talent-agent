@@ -73,7 +73,7 @@ def own_data(tmp_path, monkeypatch):
 def test_run_takes_next_port_everywhere(session, monkeypatch, own_data):
     """8000 занят: сервер, браузер и ссылки в письме — на один и тот же следующий порт."""
     started, announced = {}, []
-    monkeypatch.setattr(main.uvicorn, "run", lambda app, host, port: started.update(port=port))
+    monkeypatch.setattr(main.uvicorn, "run", lambda app, host, port, **_: started.update(port=port))
     monkeypatch.setattr(main, "announce", lambda port, _open: announced.append(port))
     monkeypatch.delenv("TA_PUBLIC_URL", raising=False)
     with listening() as busy:
@@ -292,3 +292,15 @@ def test_locked_data_without_answer_stops_with_hint(tmp_path, monkeypatch):
     free = main.hold(data)  # закрылась копия — папка свободна
     assert free is not None
     free.close()
+
+
+@pytest.mark.parametrize("portable", [True, False])
+def test_portable_mode_has_no_access_log(portable, monkeypatch, own_data):
+    """Портативная сборка (TA_OPEN_BROWSER=1) не пишет строку на каждый запрос."""
+    options = {}
+    monkeypatch.setattr(main.uvicorn, "run", lambda app, **kw: options.update(kw))
+    monkeypatch.setattr(main, "announce", lambda *_: None)
+    monkeypatch.setattr(main, "free_port", lambda host, first: first)
+    monkeypatch.setenv("TA_OPEN_BROWSER", "1" if portable else "0")
+    main.run()
+    assert options["access_log"] is not portable
