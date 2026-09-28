@@ -50,3 +50,10 @@ def test_launcher_explains_unpacked_zip_before_start():
     assert check < start and block[-1] == ")"
     assert "Сначала распакуйте архив целиком, затем запустите этот файл" in block[1]
     assert "pause" in block[2] and "exit /b 1" in block[3]
+
+
+def test_client_readme_names_both_warning_buttons():
+    """Окно Windows про неизвестного издателя бывает двух видов — в инструкции оба."""
+    text = (PACKAGING / "readme-client.txt").read_text("utf-8")
+    step = next(line for line in text.splitlines() if line.startswith("3."))
+    assert "«Выполнить»" in step and "«Подробнее», затем «Выполнить в любом случае»" in step
