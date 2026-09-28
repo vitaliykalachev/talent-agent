@@ -12,7 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
-from app import config, demo, main
+from app import config, db, demo, main
 from app.jobs import run_pending
 from app.llm import MockLLM, get_llm
 from app.models import Vacancy
@@ -37,6 +37,7 @@ def listening() -> socket.socket:
 def test_health(web):
     r = web.get("/health")
     assert r.status_code == 200 and r.text == "ok"
+    assert r.headers[main.INSTANCE] == main.instance(db.data_dir)
 
 
 def test_busy_port_skipped():
@@ -59,7 +60,17 @@ def test_announce_prints_address_and_opens_browser(monkeypatch, capsys):
     assert out.count(url) == 2 and "не закрывайте это окно, пока работаете" in out
 
 
-def test_run_takes_next_port_everywhere(session, monkeypatch):
+@pytest.fixture
+def own_data(tmp_path, monkeypatch):
+    """Своя папка данных для run(): блокировка не должна остаться на папке другого теста."""
+    monkeypatch.setenv("TA_DATA_DIR", str(tmp_path / "run"))
+    yield tmp_path / "run"
+    if main._held:
+        main._held.close()
+        main._held = None
+
+
+def test_run_takes_next_port_everywhere(session, monkeypatch, own_data):
     """8000 занят: сервер, браузер и ссылки в письме — на один и тот же следующий порт."""
     started, announced = {}, []
     monkeypatch.setattr(main.uvicorn, "run", lambda app, host, port: started.update(port=port))
@@ -219,3 +230,65 @@ def test_check_with_key_in_demo_asks_real_service(web, monkeypatch):
     text = web.post("/settings/check", data=form).text
     assert asked == ["anthropic"] and "Подключение работает" in text
     assert config.get("llm_provider") == "mock"  # проверка ничего не сохраняет
+
+
+def start(data: Path, port: int) -> subprocess.Popen:
+    env = dict(
+        os.environ,
+        PYTHONUTF8="1",
+        TA_PORT=str(port),
+        TA_DATA_DIR=str(data),
+        TA_MODELS_DIR=str(data / "models"),
+        HF_HUB_OFFLINE="1",
+    )
+    env.pop("TA_OPEN_BROWSER", None)
+    return subprocess.Popen(
+        [sys.executable, "-m", "app.main"],
+        cwd=ROOT,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+
+
+def test_second_launch_on_same_data_opens_first(tmp_path):
+    """Второй двойной клик, пока первый работает: второго сервера на той же базе нет,
+    вторая копия называет адрес первой и выходит."""
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    first = start(tmp_path / "data", port)
+    try:
+        deadline = time.monotonic() + 60
+        while True:
+            try:
+                urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=2).close()
+                break
+            except OSError:
+                assert first.poll() is None and time.monotonic() < deadline
+                time.sleep(0.3)
+        second = start(tmp_path / "data", port)
+        out = second.communicate(timeout=60)[0].decode("utf-8")
+        assert second.returncode == 0, out
+        assert f"Агент уже запущен: http://127.0.0.1:{port}/" in out
+        assert "Uvicorn running" not in out and first.poll() is None
+    finally:
+        first.terminate()
+        first.communicate(timeout=30)
+
+
+def test_locked_data_without_answer_stops_with_hint(tmp_path, monkeypatch):
+    """Копия держит папку, но ещё не отвечает и так и не ответила: сервер не стартует."""
+    data = tmp_path / "data"
+    data.mkdir()
+    other = main.hold(data)
+    assert other is not None and main.hold(data) is None
+    monkeypatch.setenv("TA_DATA_DIR", str(data))
+    monkeypatch.setattr(main, "WAIT", 0)
+    monkeypatch.setattr(main.uvicorn, "run", lambda *a, **k: pytest.fail("второй сервер"))
+    with pytest.raises(SystemExit, match="Агент уже запущен, но не отвечает"):
+        main.run()
+    other.close()
+    free = main.hold(data)  # закрылась копия — папка свободна
+    assert free is not None
+    free.close()
