@@ -120,9 +120,25 @@ def fetch_model() -> None:
         "m = S(config.DEFAULTS['embed_model'], cache_folder=str(embed.models_dir())"
     )
     run(PYTHON, "-c", load + ")", cwd=PKG, env=env())
+    models = PKG / "data" / "models"
+    flatten_cache(models)
+    size = sum(p.stat().st_size for p in models.rglob("*") if p.is_file())
+    print(f"  веса и настройки модели: {size / 2**20:.0f} МБ", flush=True)
     # Второй раз — без сети и только из папки: так модель грузится у клиента
     check = load + ", local_files_only=True); print('  вектор:', m.encode(['литьё']).shape)"
     run(PYTHON, "-c", check, cwd=PKG, env=env(HF_HUB_OFFLINE="1"))
+
+
+def flatten_cache(models: Path) -> None:
+    """Кэш Hugging Face держит файлы в blobs/, а в snapshots/ — ссылки на них. ZIP ссылок
+    не хранит и положил бы каждый файл дважды-трижды: ссылки заменяем самими файлами,
+    blobs/ убираем. Загрузка с local_files_only идёт через refs/ и snapshots/."""
+    for link in [p for p in models.rglob("*") if p.is_symlink()]:
+        target = link.resolve()
+        link.unlink()
+        shutil.copy2(target, link)
+    for junk in [p for p in models.rglob("*") if p.is_dir() and p.name in ("blobs", ".locks")]:
+        shutil.rmtree(junk, ignore_errors=True)
 
 
 def build_demo() -> None:
@@ -150,6 +166,7 @@ def launcher() -> None:
 
 def pack() -> None:
     step("ZIP")
+    assert not [p for p in PKG.rglob("*") if p.is_symlink()], "в сборке остались ссылки"
     files = sorted(p for p in PKG.rglob("*") if p.is_file())
     size = sum(p.stat().st_size for p in files)
     with zipfile.ZipFile(ZIP, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as z:
