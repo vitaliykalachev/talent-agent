@@ -5,7 +5,22 @@
 {% if message %}<div class="callout {{ 'stop' if error else 'ok' }}"><p>{{ message }}</p></div>{% endif %}
 
 <form class="card settings" method="post" action="/settings">
-  <h4>Подключение к ИИ: сервис и ключ доступа</h4>
+  <h4>Подключение к ИИ</h4>
+  <div class="field">
+    <label for="llm_api_key">Ключ доступа</label>
+    <input id="llm_api_key" type="password" name="llm_api_key" autocomplete="off" placeholder="{{ 'Ключ задан. Оставьте пустым, чтобы не менять' if has_key else 'Вставьте ключ' }}">
+    <small>Ключ вам передадут отдельно. Вставьте его и нажмите «Сохранить».</small>
+  </div>
+  <div class="actions">
+    <button class="button" type="submit">Сохранить</button>
+    <button class="button ghost" type="submit" formaction="/settings/check"
+            hx-post="/settings/check" hx-target="main" hx-select="main" hx-swap="outerHTML"
+            hx-disabled-elt="this"><span class="idle">Проверить подключение</span><span class="busy">Проверяем, до 10 секунд…</span></button>
+    {% if has_key %}<button class="button ghost" type="submit" formaction="/settings/key-delete" formnovalidate>Удалить ключ</button>{% endif %}
+  </div>
+
+  <details class="admin">
+  <summary>Дополнительно: сервис, модели, цены, поиск</summary>
   <div class="field">
     <label for="llm_provider">Сервис</label>
     <select id="llm_provider" name="llm_provider">
@@ -18,20 +33,6 @@
     <label for="llm_base_url">Адрес сервиса</label>
     <input id="llm_base_url" type="text" name="llm_base_url" value="{{ values.llm_base_url }}" placeholder="https://api.claudehub.fun">
   </div>
-  <div class="field">
-    <label for="llm_api_key">Ключ доступа</label>
-    <input id="llm_api_key" type="password" name="llm_api_key" autocomplete="off" placeholder="{{ 'Ключ задан. Оставьте пустым, чтобы не менять' if has_key else 'Вставьте ключ' }}">
-  </div>
-  <div class="actions">
-    <button class="button" type="submit">Сохранить</button>
-    <button class="button ghost" type="submit" formaction="/settings/check"
-            hx-post="/settings/check" hx-target="main" hx-select="main" hx-swap="outerHTML"
-            hx-disabled-elt="this"><span class="idle">Проверить подключение</span><span class="busy">Проверяем, до 10 секунд…</span></button>
-    {% if has_key %}<button class="button ghost" type="submit" formaction="/settings/key-delete" formnovalidate>Удалить ключ</button>{% endif %}
-  </div>
-
-  <details class="admin">
-  <summary>Для администратора: модели, цены, поиск</summary>
   <div class="field">
     <label for="llm_model_parse">Модель для разбора резюме</label>
     <input id="llm_model_parse" type="text" name="llm_model_parse" value="{{ values.llm_model_parse }}">

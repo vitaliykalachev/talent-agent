@@ -15,6 +15,9 @@ from app.models import Setting
 ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(os.environ.get("TA_ENV_FILE") or ROOT / ".env", override=False)
 
+RECORDED = "recorded"  # llm_fixtures: записанные ответы демо, где бы ни лежала папка программы
+RECORDED_DIR = ROOT / "app" / "demo_data" / "llm"
+
 DEFAULTS = {
     "llm_provider": "anthropic",  # anthropic | openai | mock
     "llm_base_url": "",
@@ -56,8 +59,24 @@ def get(key: str) -> str:
     with db.SessionLocal() as s:
         row = s.get(Setting, key)
     if row and row.value:
-        return row.value
-    return os.environ.get(ENV.get(key, ""), "") or DEFAULTS[key]
+        value = row.value
+    else:
+        value = os.environ.get(ENV.get(key, ""), "") or DEFAULTS[key]
+    if key == "llm_fixtures" and value == RECORDED:
+        return str(RECORDED_DIR)
+    return value
+
+
+def has_recorded() -> bool:
+    """База демо: в настройках — записанные ответы из папки программы."""
+    with db.SessionLocal() as s:
+        row = s.get(Setting, "llm_fixtures")
+    return bool(row and row.value) and Path(get("llm_fixtures")).resolve() == RECORDED_DIR.resolve()
+
+
+def is_demo() -> bool:
+    """Демо-режим: база демо и работают записанные ответы (ключ ещё не вставлен)."""
+    return get("llm_provider") == "mock" and has_recorded()
 
 
 def number(key: str) -> float:

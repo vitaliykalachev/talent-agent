@@ -4,6 +4,7 @@
 <p class="back"><a href="/vacancies">← Все вакансии</a></p>
 <h1>Новая вакансия</h1>
 {% if error %}<div class="callout stop"><p>{{ error }}</p></div>{% endif %}
+{% if demo_miss is defined %}{% include "demo_miss.html" %}{% endif %}
 <form class="card settings" method="post" action="/vacancies/new"
       hx-post="/vacancies/new" hx-target="main" hx-select="main" hx-swap="outerHTML"
       hx-disabled-elt="find button[type=submit]">

@@ -30,6 +30,12 @@ PER_PROFESSION = 60
 DUPLICATE_SHARE = 0.05
 POSSIBLE = 3  # из них — возможные дубли без общих контактов
 RECORDED = Path(__file__).parent / "demo_data" / "llm"  # ответы живой модели для демо
+# Настоящий сервис ИИ, как в .env.example: рекрутеру остаётся вставить ключ в «Настройках»
+REAL_SERVICE = {
+    "llm_base_url": "https://api.claudehub.fun",
+    "llm_model_parse": "claude-haiku-4.5",
+    "llm_model_eval": "claude-sonnet-5",
+}
 RECORDED_ON = date(2026, 9, 27)  # день записи: от него считаются даты в демо-резюме
 STALE_SHARE = 0.20
 
@@ -893,7 +899,7 @@ def build(target: Path, record: bool = False) -> None:
     if recorder:
         recorder.attach()
     else:  # записанные ответы; в «Настройках» можно переключиться на настоящий сервис
-        config.save({"llm_provider": "mock", "llm_fixtures": str(RECORDED)})
+        config.save({"llm_provider": "mock", "llm_fixtures": config.RECORDED, **REAL_SERVICE})
     with db.SessionLocal() as session:
         start_parse(session, waiting_ids(session))
     run_pending()

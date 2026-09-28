@@ -1,0 +1,59 @@
+name: portable-win
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Релиз, куда положить ZIP"
+        default: portable-win-v0.1
+  push:
+    tags: ["portable-*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+      GH_TOKEN: ${{ github.token }}
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Сборка
+        run: python packaging/build_win.py
+
+      - name: Распаковка Expand-Archive
+        shell: pwsh
+        run: |
+          Expand-Archive dist/kadrovyi-agent-win64.zip -DestinationPath C:\smoke
+          if (-not (Test-Path -LiteralPath "C:\smoke\KadrovyAgent\Запустить.bat")) {
+            Get-ChildItem C:\smoke\KadrovyAgent | Format-Table Name
+            throw "Имя «Запустить.bat» искажено при распаковке"
+          }
+          $size = (Get-ChildItem C:\smoke\KadrovyAgent -Recurse -File | Measure-Object Length -Sum).Sum
+          Write-Host ("Распакованная папка: {0:N0} МБ" -f ($size / 1MB))
+          Write-Host ("ZIP: {0:N0} МБ" -f ((Get-Item dist/kadrovyi-agent-win64.zip).Length / 1MB))
+
+      - name: Дымовой тест
+        shell: pwsh
+        run: ./packaging/smoke.ps1 -Dir C:\smoke\KadrovyAgent
+
+      - name: Релиз
+        shell: pwsh
+        run: |
+          gh release view $env:TAG *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $env:TAG dist/kadrovyi-agent-win64.zip --clobber
+          } else {
+            gh release create $env:TAG dist/kadrovyi-agent-win64.zip --prerelease `
+              --target $env:GITHUB_SHA --title "Кадровый агент для Windows ($env:TAG)" `
+              --notes "Портативная сборка: распаковать, открыть KadrovyAgent, дважды нажать «Запустить»."
+          }

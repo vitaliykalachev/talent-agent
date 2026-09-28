@@ -8,7 +8,7 @@ from markupsafe import Markup, escape
 from sqlalchemy import select
 
 from app.anonymize import quote_span
-from app.models import Candidate, ImportBatch, Job
+from app.models import Candidate, ImportBatch, Job, Vacancy
 
 MONTHS = ["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"]
 NBSP = " "
@@ -255,3 +255,8 @@ def marked_source(c: Candidate, extra: list[tuple[str, list[int]]] = ()) -> tupl
         pos, anchors = stop, anchors | {anchor}
     out.append(escape(c.raw_text[pos:]))
     return Markup("").join(out), anchors
+
+
+def showcase(s) -> Vacancy | None:
+    """Готовая вакансия демо: на неё ведёт подсказка, когда записанного ответа нет."""
+    return s.scalar(select(Vacancy).order_by(Vacancy.id).limit(1))
