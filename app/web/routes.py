@@ -398,12 +398,16 @@ def parse_confirm(request: Request, scope: str = "trial", job: int | None = None
     with db.SessionLocal() as s:
         ids = _scope_ids(s, scope, job)
         est = parse.estimate(s, ids)
+        demo = config.is_demo()
+        showcase = present.showcase(s) if demo else None
     return render(
         request,
         "parse_confirm.html",
         scope=scope,
         job_id=job,
         est=est,
+        demo=demo,
+        demo_miss=showcase,
         duration=present.duration(est["seconds_low"], est["seconds_high"], True),
         price=present.rub_range(est["rub_low"], est["rub_high"]),
     )

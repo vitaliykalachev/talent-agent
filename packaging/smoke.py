@@ -15,8 +15,8 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-BANNER = "Демо-режим: данные вымышленные, ИИ работает на записанных ответах"
-DEMO_MISS = "В демо-версии ИИ отключён — новые вакансии и резюме не разбираются"
+DEMO_MISS = "ИИ работает на записанных ответах, свои вакансии и резюме в демо не разбираются"
+BANNER = f"Демо-режим: данные вымышленные. {DEMO_MISS}."
 PAGES = ("/", "/vacancies", "/vacancies/1", "/duplicates", "/morning", "/settings")
 SHOWCASE = ("/", "/morning", "/vacancies", "/vacancies/1/results")
 FAILURES = ("не получилось", "не удалось оценить", "есть проблемы")

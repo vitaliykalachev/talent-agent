@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
-{% if demo %}<p class="callout small">Демо-режим: данные вымышленные, ИИ работает на записанных ответах</p>{% endif %}
+{% if demo %}<p class="callout small">Демо-режим: данные вымышленные. {{ DEMO_MISS }}.</p>{% endif %}
 <h1>Главная</h1>
 {% if not stats.records and not running %}
 <p class="sub">База пока пустая. Начните с неё: агент прочитает выгрузку из CRM и файлы резюме.</p>

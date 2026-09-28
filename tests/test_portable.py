@@ -175,8 +175,8 @@ def test_python_m_app_main_serves_with_utf8_mode(tmp_path):
     assert f"http://127.0.0.1:{port}/ — не закрывайте это окно" in out
 
 
-DEMO_BANNER = "Демо-режим: данные вымышленные, ИИ работает на записанных ответах"
-DEMO_MISS = "В демо-версии ИИ отключён — новые вакансии и резюме не разбираются"
+DEMO_MISS = "ИИ работает на записанных ответах, свои вакансии и резюме в демо не разбираются"
+DEMO_BANNER = f"Демо-режим: данные вымышленные. {DEMO_MISS}."
 
 
 def test_demo_banner_on_home_until_key(web):
@@ -310,3 +310,13 @@ def test_portable_mode_has_no_access_log(portable, monkeypatch, own_data):
     monkeypatch.setenv("TA_OPEN_BROWSER", "1" if portable else "0")
     main.run()
     assert options["access_log"] is not portable
+
+
+def test_parse_whole_base_in_demo_shows_hint_not_price(web, session, do_import):
+    """«Разбор всей базы» в демо: та же подсказка вместо цены и кнопки."""
+    config.save({"llm_provider": "mock", "llm_fixtures": config.RECORDED})
+    do_import(None, [ROOT / "tests" / "fixtures" / "resumes"])
+    text = web.get("/parse", params={"scope": "all"}).text
+    assert DEMO_MISS in text and "Начать разбор" not in text and "₽" not in text
+    config.save({"llm_provider": "anthropic", "llm_api_key": "ключ"})  # ключ вставлен
+    assert "Начать разбор" in web.get("/parse", params={"scope": "all"}).text

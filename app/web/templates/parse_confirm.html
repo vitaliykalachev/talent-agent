@@ -3,7 +3,9 @@
 {% block content %}
 <p class="back"><a href="/">← На главную</a></p>
 <h1>{% if scope == "trial" %}Пробный разбор{% elif scope == "retry" %}Разобрать ещё раз{% else %}Разбор всей базы{% endif %}</h1>
-{% if est.count %}
+{% if demo and est.count %}
+{% include "demo_miss.html" %}
+{% elif est.count %}
 <div class="card confirm">
   <p class="lead">Агент разберёт {{ est.count|num }} резюме. Займёт {{ duration }}, будет стоить примерно {{ price }}.</p>
   <p>Модели уходит текст без ФИО, телефонов, почты и ссылок, оригиналы остаются у вас. <a href="/parse/preview" target="_blank">Показать, что уходит модели</a></p>
