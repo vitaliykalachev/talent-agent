@@ -11,6 +11,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tarfile
 import urllib.request
 import zipfile
@@ -163,6 +164,7 @@ def pack() -> None:
 
 
 def main() -> None:
+    sys.stdout.reconfigure(encoding="utf-8")  # консоль раннера — cp1252, а вывод по-русски
     shutil.rmtree(OUT, ignore_errors=True)
     PKG.mkdir(parents=True)
     fetch_python()
