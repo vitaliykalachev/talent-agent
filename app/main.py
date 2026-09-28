@@ -60,7 +60,7 @@ def create_app(data_dir: Path | str | None = None) -> FastAPI:
 
 
 PORTS = 11  # 8000 занят — пробуем 8001–8010
-WAIT = 120  # секунд ждём, пока ответит уже запущенная копия
+WAIT = 60  # секунд ждём, пока ответит уже запущенная копия
 INSTANCE = "X-Agent-Instance"
 _held = None  # блокировка папки данных живёт, пока жив процесс
 
@@ -150,6 +150,7 @@ def run() -> None:
     data_dir.mkdir(parents=True, exist_ok=True)
     _held = hold(data_dir)
     if _held is None:  # второй двойной клик: не второй сервер на той же базе, а окно первого
+        print("Агент уже запускается, ждём ответа…", flush=True)
         url = running(instance(data_dir), wanted, WAIT)
         if url is None:
             sys.exit("Агент уже запущен, но не отвечает. Закройте его окно и запустите снова.")

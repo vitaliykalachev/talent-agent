@@ -283,17 +283,20 @@ def test_second_launch_on_same_data_opens_first(tmp_path):
         first.communicate(timeout=30)
 
 
-def test_locked_data_without_answer_stops_with_hint(tmp_path, monkeypatch):
+def test_locked_data_without_answer_stops_with_hint(tmp_path, monkeypatch, capsys):
     """Копия держит папку, но ещё не отвечает и так и не ответила: сервер не стартует."""
     data = tmp_path / "data"
     data.mkdir()
     other = main.hold(data)
     assert other is not None and main.hold(data) is None
     monkeypatch.setenv("TA_DATA_DIR", str(data))
-    monkeypatch.setattr(main, "WAIT", 0)
     monkeypatch.setattr(main.uvicorn, "run", lambda *a, **k: pytest.fail("второй сервер"))
-    with pytest.raises(SystemExit, match="Агент уже запущен, но не отвечает"):
+    assert main.WAIT == 60  # дольше минуты окно не молчит
+    monkeypatch.setattr(main, "WAIT", 0)
+    with pytest.raises(SystemExit, match="Агент уже запущен, но не отвечает") as stop:
         main.run()
+    assert isinstance(stop.value.code, str)  # sys.exit(строка): текст в консоль, код 1
+    assert "Агент уже запускается, ждём ответа…" in capsys.readouterr().out
     other.close()
     free = main.hold(data)  # закрылась копия — папка свободна
     assert free is not None
