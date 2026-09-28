@@ -2,6 +2,11 @@
 chcp 65001 >nul
 title Кадровый агент
 cd /d "%~dp0"
+if not exist "python\python.exe" (
+  echo Сначала распакуйте архив целиком, затем запустите этот файл из распакованной папки.
+  pause
+  exit /b 1
+)
 set PYTHONUTF8=1
 set "TA_DATA_DIR=%~dp0data"
 set "TA_MODELS_DIR=%~dp0data\models"

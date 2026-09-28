@@ -39,3 +39,14 @@ def test_model_cache_packed_once(tmp_path):
     assert (repo / "refs" / "main").read_text() == "h1"
     files = [p for p in tmp_path.rglob("*") if p.is_file()]
     assert sum(p.read_bytes() == b"weights" for p in files) == 1
+
+
+def test_launcher_explains_unpacked_zip_before_start():
+    """Двойной клик по bat прямо в ZIP: вместо «не найден python» — что сделать."""
+    lines = (PACKAGING / "launcher.bat").read_text("utf-8").splitlines()
+    check = lines.index('if not exist "python\\python.exe" (')
+    start = lines.index('"python\\python.exe" -m app.main')
+    block = lines[check : check + 5]
+    assert check < start and block[-1] == ")"
+    assert "Сначала распакуйте архив целиком, затем запустите этот файл" in block[1]
+    assert "pause" in block[2] and "exit /b 1" in block[3]
