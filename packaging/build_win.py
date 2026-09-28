@@ -10,6 +10,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tarfile
@@ -32,6 +33,7 @@ VSWHERE = (
 )
 # Рантайм VC++ рядом с python.exe: без него на чистой Windows torch не импортируется
 RUNTIME = ("msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll", "vcomp140.dll")
+MODEL_LIMIT = 600 * 2**20  # веса BERTA fp32 — около 490 МБ; больше — в сборке остались дубли
 LAUNCHER = {"launcher.bat": "Запустить.bat", "readme-client.txt": "Как запустить.txt"}
 
 
@@ -121,15 +123,20 @@ def fetch_model() -> None:
     )
     run(PYTHON, "-c", load + ")", cwd=PKG, env=env())
     models = PKG / "data" / "models"
-    flatten_cache(models)
-    size = sum(p.stat().st_size for p in models.rglob("*") if p.is_file())
+    size = flatten_cache(models)
     print(f"  веса и настройки модели: {size / 2**20:.0f} МБ", flush=True)
     # Второй раз — без сети и только из папки: так модель грузится у клиента
     check = load + ", local_files_only=True); print('  вектор:', m.encode(['литьё']).shape)"
     run(PYTHON, "-c", check, cwd=PKG, env=env(HF_HUB_OFFLINE="1"))
 
 
-def flatten_cache(models: Path) -> None:
+def writable(func, path, _exc) -> None:
+    """Блоб весов в кэше — «только чтение», и Windows его не удаляет: снимаем и повторяем."""
+    os.chmod(path, stat.S_IWRITE)
+    func(path)
+
+
+def flatten_cache(models: Path) -> int:
     """Кэш Hugging Face держит файлы в blobs/, а в snapshots/ — ссылки на них. ZIP ссылок
     не хранит и положил бы каждый файл дважды-трижды: ссылки заменяем самими файлами,
     blobs/ убираем. Загрузка с local_files_only идёт через refs/ и snapshots/."""
@@ -138,7 +145,13 @@ def flatten_cache(models: Path) -> None:
         link.unlink()
         shutil.copy2(target, link)
     for junk in [p for p in models.rglob("*") if p.is_dir() and p.name in ("blobs", ".locks")]:
-        shutil.rmtree(junk, ignore_errors=True)
+        shutil.rmtree(junk, onexc=writable)
+    if left := [p for p in models.rglob("blobs") if p.is_dir()]:
+        sys.exit(f"Не удалось убрать кэш весов, он лёг бы в ZIP второй раз: {left}")
+    size = sum(p.stat().st_size for p in models.rglob("*") if p.is_file())
+    if size > MODEL_LIMIT:
+        sys.exit(f"Папка модели — {size / 2**20:.0f} МБ, ждали меньше 600: в ней дубли весов")
+    return size
 
 
 def build_demo() -> None:

@@ -2,7 +2,10 @@
 
 import importlib.util
 import inspect
+import os
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 PACKAGING = ROOT / "packaging"
@@ -57,3 +60,41 @@ def test_client_readme_names_both_warning_buttons():
     text = (PACKAGING / "readme-client.txt").read_text("utf-8")
     step = next(line for line in text.splitlines() if line.startswith("3."))
     assert "«Выполнить»" in step and "«Подробнее», затем «Выполнить в любом случае»" in step
+
+
+def fake_cache(root: Path) -> Path:
+    repo = root / "models--org--model"
+    (repo / "blobs").mkdir(parents=True)
+    blob = repo / "blobs" / "abc"
+    blob.write_bytes(b"weights")
+    blob.chmod(0o444)  # как в кэше Hugging Face
+    snapshot = repo / "snapshots" / "h1"
+    snapshot.mkdir(parents=True)
+    (snapshot / "model.safetensors").symlink_to(Path("../../blobs/abc"))
+    return repo
+
+
+def test_read_only_blob_is_removed(tmp_path):
+    repo = fake_cache(tmp_path)
+    assert build_win.flatten_cache(tmp_path) == len(b"weights")
+    assert not (repo / "blobs").exists()
+    path = tmp_path / "ro"
+    path.write_text("x")
+    path.chmod(0o444)
+    build_win.writable(os.remove, str(path), None)  # обработчик снимает «только чтение»
+    assert not path.exists()
+
+
+def test_blobs_left_behind_stop_the_build(tmp_path, monkeypatch):
+    """Кэш не удалился — сборка падает, а не кладёт веса в ZIP дважды."""
+    fake_cache(tmp_path)
+    monkeypatch.setattr(build_win.shutil, "rmtree", lambda *a, **k: None)
+    with pytest.raises(SystemExit, match="Не удалось убрать кэш весов"):
+        build_win.flatten_cache(tmp_path)
+
+
+def test_oversized_model_stops_the_build(tmp_path, monkeypatch):
+    fake_cache(tmp_path)
+    monkeypatch.setattr(build_win, "MODEL_LIMIT", 3)
+    with pytest.raises(SystemExit, match="ждали меньше 600"):
+        build_win.flatten_cache(tmp_path)
