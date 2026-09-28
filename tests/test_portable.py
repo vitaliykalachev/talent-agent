@@ -186,6 +186,12 @@ def test_demo_banner_on_home_until_key(web):
     assert DEMO_BANNER not in web.get("/").text
 
 
+def test_no_demo_banner_on_developer_mock(web):
+    """Мок разработчика со своими ответами — не демо: плашки нет."""
+    config.save({"llm_provider": "mock", "llm_fixtures": str(ROOT / "tests" / "fixtures" / "llm")})
+    assert DEMO_BANNER not in web.get("/").text
+
+
 def test_own_vacancy_in_demo_gets_hint_not_error(web, session):
     config.save({"llm_provider": "mock", "llm_fixtures": config.RECORDED})
     ready = Vacancy(title="Начальник литейного производства", description="…", hard_filters={})

@@ -74,6 +74,11 @@ def has_recorded() -> bool:
     return bool(row and row.value) and Path(get("llm_fixtures")).resolve() == RECORDED_DIR.resolve()
 
 
+def is_demo() -> bool:
+    """Демо-режим: база демо и работают записанные ответы (ключ ещё не вставлен)."""
+    return get("llm_provider") == "mock" and has_recorded()
+
+
 def number(key: str) -> float:
     try:
         return float(get(key).replace(",", "."))

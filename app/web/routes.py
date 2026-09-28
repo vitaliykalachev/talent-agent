@@ -185,7 +185,7 @@ def home(request: Request):
         with_errors=with_errors,
         flow=flow,
         has_key=bool(config.get("llm_api_key")) or config.get("llm_provider") == "mock",
-        demo=config.get("llm_provider") == "mock" and not config.get("llm_api_key"),
+        demo=config.is_demo(),
     )
 
 
