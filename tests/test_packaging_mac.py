@@ -48,15 +48,23 @@ def test_scripts_find_python_next_to_them(tmp_path):
     script = bin_dir / "hello"
     script.write_text(f"#!{bin_dir / 'python3.12'}\nimport sys\nprint('ok', sys.argv[1])\n")
     script.chmod(0o755)
+    long = bin_dir / "long"  # путь длиннее предела shebang uv пишет через /bin/sh
+    long.write_text(
+        f"#!/bin/sh\n'''exec' '{bin_dir / 'python3.12'}' \"$0\" \"$@\"\n' '''\n"
+        "import sys\nprint('long', sys.argv[1])\n"
+    )
+    long.chmod(0o755)
     other = bin_dir / "other"
     other.write_text("#!/bin/sh\necho other\n")
     build.relocate_scripts(bin_dir)
-    assert str(tmp_path) not in script.read_text()
+    assert str(tmp_path) not in script.read_text() + long.read_text()
     assert other.read_text() == "#!/bin/sh\necho other\n"
     moved = tmp_path / "moved"
     (tmp_path / "python").rename(moved)
     out = subprocess.run([moved / "bin" / "hello", "раз"], capture_output=True, text=True)
     assert out.stdout == "ok раз\n", out.stderr
+    out = subprocess.run([moved / "bin" / "long", "два"], capture_output=True, text=True)
+    assert out.stdout == "long два\n", out.stderr
 
 
 def test_leaked_build_path_is_found(tmp_path):
@@ -168,7 +176,8 @@ def test_launcher_removes_quarantine_from_whole_folder(tmp_path):
         assert "com.apple.quarantine" not in attrs, path
     lines = LAUNCHER.read_text("utf-8").splitlines()
     first = next(i for i, line in enumerate(lines) if not line.startswith("#"))
-    assert lines[first] == 'xattr -dr com.apple.quarantine "$(dirname "$0")" 2>/dev/null || true'
+    assert lines[first] == 'cd "$(dirname "$0")" || exit 1'
+    assert lines[first + 1] == 'xattr -dr com.apple.quarantine "$PWD" 2>/dev/null || true'
 
 
 def test_installer_structure():
@@ -207,7 +216,7 @@ def test_client_texts():
         for words in (
             "Cmd + Пробел",
             "«Терминал»",
-            "600 МБ",
+            "900 МБ",
             "KadrovyAgent",
             "«Кадровый агент» на рабочем столе",
             "Не закрывайте окно Терминала",
@@ -222,3 +231,16 @@ def test_client_texts():
         assert text.index("«Терминал»") < text.index("Если с командой не вышло")
     message = (PACKAGING / "message-client-mac.txt").read_text("utf-8")
     assert "curl -fsSL __АДРЕС__/install-mac.sh | bash" in message
+
+
+def test_mac_wheels_target_oldest_supported_macos(tmp_path, monkeypatch):
+    """Сборка идёт на новой macOS, а клиент может сидеть на 14: колёса выбираются под 14."""
+    calls = []
+    monkeypatch.setattr(build, "OUT", tmp_path)
+    monkeypatch.setattr(build, "run", lambda *a, **kw: calls.append((a, kw)))
+    (tmp_path / "requirements.txt").touch()
+    build.install_deps(MAC)
+    args, kwargs = calls[-1]
+    i = args.index("--python-platform")
+    assert args[i + 1] == "aarch64-apple-darwin"
+    assert kwargs["env"]["MACOSX_DEPLOYMENT_TARGET"] == "14.0"

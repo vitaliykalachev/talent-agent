@@ -78,6 +78,8 @@ def test_read_only_blob_is_removed(tmp_path):
     repo = fake_cache(tmp_path)
     assert build.flatten_cache(tmp_path) == len(b"weights")
     assert not (repo / "blobs").exists()
+    # «Только чтение» не переходит на веса: иначе «Запустить.command» не снимет с них карантин
+    assert os.access(repo / "snapshots" / "h1" / "model.safetensors", os.W_OK)
     path = tmp_path / "ro"
     path.write_text("x")
     path.chmod(0o444)

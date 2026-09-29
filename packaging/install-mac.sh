@@ -26,7 +26,7 @@ main() {
 
   local dir="$HOME/KadrovyAgent" archive
   archive=$(mktemp -t kadrovyi-agent)
-  echo "Скачиваем «Кадровый агент», около 600 МБ. Это займёт несколько минут."
+  echo "Скачиваем «Кадровый агент», около 900 МБ. Это займёт несколько минут."
   if ! curl -fL --progress-bar "$URL" -o "$archive"; then
     rm -f "$archive"
     echo "Не удалось скачать архив. Проверьте интернет и повторите команду."

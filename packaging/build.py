@@ -62,6 +62,9 @@ VSWHERE = (
 )
 # Рантайм VC++ рядом с python.exe: без него на чистой Windows torch не импортируется
 RUNTIME = ("msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll", "vcomp140.dll")
+# Самое старое колесо в uv.lock — torch 2.14 macosx_14_0_arm64. Без явной цели uv на
+# новой macOS взял бы колёса под неё (orjson macosx_15_0), и у клиента на 14 не импортировалось бы
+MACOS = "14.0"
 MODEL_LIMIT = 600 * 2**20  # веса BERTA fp32 — около 490 МБ; больше — в сборке остались дубли
 # Скрипты python/bin/* (uvicorn, alembic…) после uv pip install начинаются с абсолютного
 # пути к интерпретатору на машине сборки; меняем его на python3.12 рядом со скриптом.
@@ -114,25 +117,28 @@ def install_deps(target: Target) -> None:
     step("Зависимости из uv.lock, без dev-группы")
     requirements = OUT / "requirements.txt"
     run("uv", "export", "--frozen", "--no-dev", "--no-emit-project", "-o", requirements, cwd=ROOT)
+    platform = ["--python-platform", target.triple] if target.triple.endswith("darwin") else []
     run(
         "uv", "pip", "install", "--python", PKG / target.python, "--break-system-packages",
-        "--link-mode", "copy", "-r", requirements,
+        "--link-mode", "copy", *platform, "-r", requirements,
+        env={**os.environ, "MACOSX_DEPLOYMENT_TARGET": MACOS},
     )  # fmt: skip
     requirements.unlink()
 
 
 def relocate_scripts(bin_dir: Path) -> None:
     """Первая строка скриптов в python/bin — абсолютный путь к python3.12 на машине
-    сборки. У клиента такого пути нет: заменяем её поиском интерпретатора рядом."""
+    сборки (длинный путь uv пишет через /bin/sh). У клиента такого пути нет: заменяем
+    заголовок поиском интерпретатора рядом со скриптом."""
+    python = bin_dir / "python3.12"
+    headers = [f"#!{python}\n", f"#!/bin/sh\n'''exec' '{python}' \"$0\" \"$@\"\n' '''\n"]
     for script in bin_dir.iterdir():
         if script.is_symlink() or not script.is_file():
             continue
         data = script.read_bytes()
-        if not data.startswith(b"#!/") or b"\n" not in data:
-            continue
-        shebang, rest = data.split(b"\n", 1)
-        if shebang == b"#!" + str(bin_dir / "python3.12").encode():
-            script.write_bytes(RELOCATABLE.encode() + rest)
+        for header in map(str.encode, headers):
+            if data.startswith(header):
+                script.write_bytes(RELOCATABLE.encode() + data[len(header) :])
 
 
 def copy_code() -> None:
@@ -194,6 +200,7 @@ def flatten_cache(models: Path) -> int:
         target = link.resolve()
         link.unlink()
         shutil.copy2(target, link)
+        os.chmod(link, 0o644)  # у блоба «только чтение», с такого файла карантин не снимается
     for junk in [p for p in models.rglob("*") if p.is_dir() and p.name in ("blobs", ".locks")]:
         shutil.rmtree(junk, onexc=writable)
     if left := [p for p in models.rglob("blobs") if p.is_dir()]:
