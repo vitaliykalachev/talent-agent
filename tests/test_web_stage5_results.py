@@ -144,7 +144,7 @@ def test_21_24_candidate_card_typography_and_sources(web, session):
     session.add(Candidate(full_name="Новиков Пётр", raw_text="Технолог", parse_status="new"))
     session.commit()
     text = web.get(f"/candidates/{c.id}").text
-    assert "+7\xa0950\xa0476-39-28" in text and "+79120000000" not in text
+    assert "+7\xa0912\xa0000-00-00" in text and "+79120000000" not in text
     assert "11,5\xa0года" in text
     assert "дата в будущем, проверьте" in text
     for anchor in ("q-city", "q-skills", "q-relocation"):
