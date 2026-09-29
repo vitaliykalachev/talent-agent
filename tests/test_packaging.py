@@ -1,4 +1,4 @@
-"""Сборка для Windows: то, что можно проверить без Windows."""
+"""Портативные сборки: то, что проверяется без сборки целиком."""
 
 import importlib.util
 import inspect
@@ -9,14 +9,14 @@ import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 PACKAGING = ROOT / "packaging"
-spec = importlib.util.spec_from_file_location("build_win", PACKAGING / "build_win.py")
-build_win = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(build_win)
+spec = importlib.util.spec_from_file_location("build", PACKAGING / "build.py")
+build = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(build)
 
 
 def test_build_output_is_utf8_on_runner_console():
     """Консоль раннера — cp1252: кириллица в выводе сборки не должна ронять её."""
-    first = inspect.getsource(build_win.main).splitlines()[1].strip()
+    first = inspect.getsource(build.main).splitlines()[1].strip()
     assert first.startswith('sys.stdout.reconfigure(encoding="utf-8")')
     workflow = (ROOT / ".github" / "workflows" / "portable-win.yml").read_text("utf-8")
     assert 'PYTHONUTF8: "1"' in workflow
@@ -35,7 +35,7 @@ def test_model_cache_packed_once(tmp_path):
     snapshot = repo / "snapshots" / "h1"
     snapshot.mkdir(parents=True)
     (snapshot / "model.safetensors").symlink_to(Path("../../blobs/abc"))
-    build_win.flatten_cache(tmp_path)
+    build.flatten_cache(tmp_path)
     weights = snapshot / "model.safetensors"
     assert not weights.is_symlink() and weights.read_bytes() == b"weights"
     assert not (repo / "blobs").exists() and not (tmp_path / "blobs").exists()
@@ -76,25 +76,25 @@ def fake_cache(root: Path) -> Path:
 
 def test_read_only_blob_is_removed(tmp_path):
     repo = fake_cache(tmp_path)
-    assert build_win.flatten_cache(tmp_path) == len(b"weights")
+    assert build.flatten_cache(tmp_path) == len(b"weights")
     assert not (repo / "blobs").exists()
     path = tmp_path / "ro"
     path.write_text("x")
     path.chmod(0o444)
-    build_win.writable(os.remove, str(path), None)  # обработчик снимает «только чтение»
+    build.writable(os.remove, str(path), None)  # обработчик снимает «только чтение»
     assert not path.exists()
 
 
 def test_blobs_left_behind_stop_the_build(tmp_path, monkeypatch):
     """Кэш не удалился — сборка падает, а не кладёт веса в ZIP дважды."""
     fake_cache(tmp_path)
-    monkeypatch.setattr(build_win.shutil, "rmtree", lambda *a, **k: None)
+    monkeypatch.setattr(build.shutil, "rmtree", lambda *a, **k: None)
     with pytest.raises(SystemExit, match="Не удалось убрать кэш весов"):
-        build_win.flatten_cache(tmp_path)
+        build.flatten_cache(tmp_path)
 
 
 def test_oversized_model_stops_the_build(tmp_path, monkeypatch):
     fake_cache(tmp_path)
-    monkeypatch.setattr(build_win, "MODEL_LIMIT", 3)
+    monkeypatch.setattr(build, "MODEL_LIMIT", 3)
     with pytest.raises(SystemExit, match="ждали меньше 600"):
-        build_win.flatten_cache(tmp_path)
+        build.flatten_cache(tmp_path)
