@@ -31,6 +31,9 @@ BATCH = 64
 RAW_CHARS = 1500  # ≈ 512 токенов окна модели — для резюме, которые не удалось разобрать
 
 _lock = threading.Lock()
+# На Mac torch считает на MPS, а он не выдерживает двух encode из разных потоков сразу
+# (Segmentation fault в MetalShaderLibrary): поиск и фоновые задачи строят векторы по очереди
+_encoding = threading.Lock()
 _models: dict = {}
 _index: dict = {"key": None, "ids": np.zeros(0, dtype=np.int64), "matrix": np.zeros((0, 0))}
 
@@ -63,11 +66,11 @@ def encode(texts: list[str], kind: str) -> np.ndarray:
     assert kind in ("query", "passage")
     model = _model(model_name())
     if kind in (model.prompts or {}):
-        vectors = model.encode(texts, prompt_name=kind, normalize_embeddings=True, batch_size=BATCH)
+        prompt = {"prompt_name": kind}
     else:
-        vectors = model.encode(
-            texts, prompt=FALLBACK_PREFIXES[kind], normalize_embeddings=True, batch_size=BATCH
-        )
+        prompt = {"prompt": FALLBACK_PREFIXES[kind]}
+    with _encoding:
+        vectors = model.encode(texts, **prompt, normalize_embeddings=True, batch_size=BATCH)
     return np.asarray(vectors, dtype=np.float32)
 
 
