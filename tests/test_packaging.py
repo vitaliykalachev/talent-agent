@@ -100,3 +100,43 @@ def test_oversized_model_stops_the_build(tmp_path, monkeypatch):
     monkeypatch.setattr(build, "MODEL_LIMIT", 3)
     with pytest.raises(SystemExit, match="ждали меньше 600"):
         build.flatten_cache(tmp_path)
+
+
+def fake_python(root: Path, site: str, scripts: str) -> Path:
+    """Кусок python/ после установки зависимостей: то, что уборка трогает и не трогает."""
+    packages = root / site
+    for folder in (
+        "torch/include/ATen", "torch/share/cmake", "torch/lib", "torch/testing",
+        "pip", "pip-25.2.dist-info", "setuptools", "pkg_resources", "numpy/tests",
+    ):  # fmt: skip
+        (packages / folder).mkdir(parents=True)
+        (packages / folder / "file").write_text("x")
+    (packages / "torch" / "bin").mkdir()
+    for name in ("protoc", "protoc-3.21.12.0", "torch_shm_manager"):
+        (packages / "torch" / "bin" / name).write_text("x")
+    (root / scripts).mkdir(parents=True, exist_ok=True)
+    for name in ("pip", "pip3", "pip3.12", "magika", "uvicorn"):
+        (root / scripts / name).write_text("x")
+    return packages
+
+
+@pytest.mark.parametrize("name", build.TARGETS)
+def test_build_only_files_removed(tmp_path, name):
+    """Заголовки, cmake и protoc из torch, pip и консольная magika рантайму не нужны — в сборке
+    их нет. setuptools остаётся (pymorphy2 импортирует pkg_resources), tests библиотек — тоже."""
+    target = build.TARGETS[name]
+    scripts = "python/Scripts" if name == "win64" else "python/bin"
+    packages = fake_python(tmp_path, target.site, scripts)
+    build.prune(tmp_path, target)
+    assert {p.name for p in packages.iterdir()} == {"torch", "setuptools", "pkg_resources", "numpy"}
+    assert {p.name for p in (packages / "torch").iterdir()} == {"lib", "testing", "bin"}
+    assert [p.name for p in (packages / "torch" / "bin").iterdir()] == ["torch_shm_manager"]
+    assert (packages / "numpy" / "tests" / "file").exists()
+    assert [p.name for p in (tmp_path / scripts).iterdir()] == ["uvicorn"]
+
+
+def test_prune_runs_after_model_check():
+    """Уборка — после установки и проверки модели, до файла запуска и архива."""
+    source = inspect.getsource(build.main)
+    assert source.index("fetch_model(target)") < source.index("prune(PKG, target)")
+    assert source.index("prune(PKG, target)") < source.index("launcher(target)")
