@@ -24,7 +24,6 @@ dependencies = [
     "bm25s>=0.3.11",
     "pystemmer>=3.1.0",
     "phonenumbers>=9.0.40",
-    "ranx>=0.3.21",
     "apscheduler>=3.10,<4",
 ]
 
@@ -36,6 +35,7 @@ dev = [
     "pytest>=8",
     "httpx>=0.27",
     "ruff>=0.6",
+    "ranx>=0.3.21",  # только набор проверки eval/ и его тест; тянет numba и llvmlite
 ]
 
 [build-system]

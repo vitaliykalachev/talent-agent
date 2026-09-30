@@ -35,6 +35,8 @@ PBS_API = "https://api.github.com/repos/astral-sh/python-build-standalone/releas
 class Target:
     triple: str  # платформа в именах сборок python-build-standalone
     python: str  # интерпретатор внутри KadrovyAgent
+    site: str  # site-packages внутри KadrovyAgent
+    scripts: str  # куда uv и pip кладут скрипты пакетов
     archive: str
     launcher: dict  # файл в packaging/ → имя в архиве
 
@@ -47,12 +49,16 @@ TARGETS = {
     "win64": Target(
         "x86_64-pc-windows-msvc",
         "python/python.exe",
+        "python/Lib/site-packages",
+        "python/Scripts",
         "kadrovyi-agent-win64.zip",
         {"launcher.bat": "Запустить.bat", "readme-client.txt": "Как запустить.txt"},
     ),
     "mac-arm64": Target(
         "aarch64-apple-darwin",
         "python/bin/python3.12",
+        "python/lib/python3.12/site-packages",
+        "python/bin",
         "kadrovyi-agent-mac.zip",
         {"launcher.command": "Запустить.command", "readme-client-mac.txt": "Как запустить.txt"},
     ),
@@ -72,6 +78,13 @@ RELOCATABLE = """#!/bin/sh
 '''exec' "$(dirname -- "$(realpath -- "$0")")"/'python3.12' "$0" "$@"
 ' '''
 """
+# Нужно только для сборки расширений и установки пакетов: заголовки C++, cmake и компилятор
+# protobuf из torch, pip. setuptools не трогаем — pymorphy2 (через natasha) импортирует
+# pkg_resources. torch/bin/torch_shm_manager остаётся: им torch делит память между процессами.
+PRUNE = ("torch/include", "torch/share", "torch/bin/protoc*", "pip", "pip-*.dist-info")
+# Скрипты, которые приложение не вызывает: pip и консольная magika на Rust (26 МБ) —
+# markitdown зовёт magika как библиотеку Python, а та работает через onnxruntime.
+PRUNE_SCRIPTS = ("pip*", "magika*")
 INSTALLER = "install-mac.sh"  # curl -fsSL <адрес>/install-mac.sh | bash
 
 
@@ -225,6 +238,16 @@ def clean() -> None:
         (PKG / "data" / name).unlink(missing_ok=True)
 
 
+def prune(pkg: Path, target: Target) -> None:
+    step("Файлы, которые рантайму не нужны")
+    site = pkg / target.site
+    scripts = pkg / target.scripts
+    found = [p for pattern in PRUNE for p in site.glob(pattern)]
+    for path in found + [p for pattern in PRUNE_SCRIPTS for p in scripts.glob(pattern)]:
+        print(f"  {path.relative_to(pkg).as_posix()}", flush=True)
+        shutil.rmtree(path) if path.is_dir() else path.unlink()
+
+
 def launcher(target: Target) -> None:
     step(" и ".join(f"«{name}»" for name in target.launcher.values()))
     for source, name in target.launcher.items():
@@ -307,6 +330,7 @@ def main() -> None:
     fetch_model(target)
     build_demo(target)
     clean()
+    prune(PKG, target)
     launcher(target)
     if name == "win64":
         pack_zip(OUT / target.archive)
