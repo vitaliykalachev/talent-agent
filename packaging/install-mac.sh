@@ -37,7 +37,7 @@ main() {
   done
 
   local dir="$HOME/KadrovyAgent" new="$HOME/KadrovyAgent.new" archive old=""
-  archive=$(mktemp -t kadrovyi-agent)
+  archive=$(mktemp "${TMPDIR:-/tmp}/kadrovyi-agent.XXXXXX")  # mktemp -t в macOS не смотрит на TMPDIR
   # Недокачанный архив и недораспакованная папка не остаются ни при каком выходе
   trap 'rm -rf "$archive" "$new"' EXIT
   echo "Скачиваем «Кадровый агент», около 900 МБ. Это займёт несколько минут."

@@ -315,7 +315,7 @@ def old_install(home: Path) -> None:
 
 
 def temp_left(tmp_path: Path) -> list:
-    return list(tmp_path.glob("kadrovyi-agent*"))
+    return list(tmp_path.glob("kadrovyi-agent.*"))
 
 
 @arm64_mac
@@ -344,7 +344,7 @@ def test_broken_archive_leaves_installation_untouched(tmp_path):
     old_install(home)
     with serve(answer(b"not a zip")) as port:
         out = install(tmp_path, home, port)
-    assert out.returncode != 0
+    assert out.returncode != 0 and "Архив не распаковался" in out.stdout
     assert (home / "KadrovyAgent" / "data" / "app.db").read_text() == "база клиента"
     assert sorted(p.name for p in home.iterdir()) == ["KadrovyAgent"]
     assert not temp_left(tmp_path)
