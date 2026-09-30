@@ -63,12 +63,18 @@ PORTS = 11  # 8000 занят — пробуем 8001–8010
 WAIT = 60  # секунд ждём, пока ответит уже запущенная копия
 INSTANCE = "X-Agent-Instance"
 _held = None  # блокировка папки данных живёт, пока жив процесс
+_instances: dict[str, str] = {}
 
 
 def instance(data_dir: Path | str) -> str:
-    """Признак экземпляра: хэш пути к папке данных."""
+    """Признак экземпляра: хэш пути к папке данных и её inode, запомненный при первом
+    вызове. Установщик переносит прежнюю папку в .old и кладёт на её место новую: агент,
+    работающий из .old, отвечает старым признаком и за новую копию себя не выдаёт."""
     path = os.path.normcase(str(Path(data_dir).resolve()))
-    return hashlib.sha1(path.encode("utf-8")).hexdigest()[:12]
+    if path not in _instances:
+        key = f"{path}:{os.stat(path).st_ino}"
+        _instances[path] = hashlib.sha1(key.encode("utf-8")).hexdigest()[:12]
+    return _instances[path]
 
 
 def health() -> PlainTextResponse:
@@ -149,9 +155,10 @@ def run() -> None:
     data_dir = Path(os.environ.get("TA_DATA_DIR") or "data").resolve()
     data_dir.mkdir(parents=True, exist_ok=True)
     _held = hold(data_dir)
+    me = instance(data_dir)  # признак запоминается сейчас, пока папка на своём месте
     if _held is None:  # второй двойной клик: не второй сервер на той же базе, а окно первого
         print("Агент уже запускается, ждём ответа…", flush=True)
-        url = running(instance(data_dir), wanted, WAIT)
+        url = running(me, wanted, WAIT)
         if url is None:
             sys.exit("Агент уже запущен, но не отвечает. Закройте его окно и запустите снова.")
         print(f"Агент уже запущен: {url}", flush=True)

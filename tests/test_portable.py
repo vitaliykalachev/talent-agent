@@ -40,6 +40,20 @@ def test_health(web):
     assert r.headers[main.INSTANCE] == main.instance(db.data_dir)
 
 
+def test_moved_folder_is_another_instance(tmp_path, monkeypatch):
+    """Установщик переносит прежнюю папку в .old, а на её место кладёт новую. Агент,
+    который работает из .old, не должен выдавать себя за агента новой папки."""
+    monkeypatch.setattr(main, "_instances", {})
+    data = tmp_path / "KadrovyAgent" / "data"
+    data.mkdir(parents=True)
+    old = main.instance(data)
+    (tmp_path / "KadrovyAgent").rename(tmp_path / "KadrovyAgent.old")
+    data.mkdir(parents=True)
+    assert main.instance(data) == old  # старая копия помнит свою папку
+    main._instances.clear()  # новая копия агента
+    assert main.instance(data) != old
+
+
 def test_busy_port_skipped():
     with listening() as busy:
         port = busy.getsockname()[1]
