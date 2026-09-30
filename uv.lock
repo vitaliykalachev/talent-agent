@@ -2001,7 +2001,6 @@ dependencies = [
     { name = "pystemmer" },
     { name = "python-dotenv" },
     { name = "python-multipart" },
-    { name = "ranx" },
     { name = "rapidfuzz" },
     { name = "sentence-transformers" },
     { name = "setuptools" },
@@ -2013,6 +2012,7 @@ dependencies = [
 dev = [
     { name = "httpx" },
     { name = "pytest" },
+    { name = "ranx" },
     { name = "ruff" },
 ]
 
@@ -2034,7 +2034,6 @@ requires-dist = [
     { name = "pystemmer", specifier = ">=3.1.0" },
     { name = "python-dotenv", specifier = ">=1.2.3" },
     { name = "python-multipart", specifier = ">=0.0.9" },
-    { name = "ranx", specifier = ">=0.3.21" },
     { name = "rapidfuzz", specifier = ">=3.9" },
     { name = "sentence-transformers", specifier = ">=6.1.0" },
     { name = "setuptools", specifier = "<81" },
@@ -2046,6 +2045,7 @@ requires-dist = [
 dev = [
     { name = "httpx", specifier = ">=0.27" },
     { name = "pytest", specifier = ">=8" },
+    { name = "ranx", specifier = ">=0.3.21" },
     { name = "ruff", specifier = ">=0.6" },
 ]
 
