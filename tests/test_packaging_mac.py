@@ -1,9 +1,13 @@
 """Сборка для Mac: цель mac-arm64 в packaging/build.py, «Запустить.command», установщик."""
 
+import contextlib
+import http.server
 import importlib.util
 import os
+import socket
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 import pytest
@@ -186,12 +190,13 @@ def test_installer_structure():
     assert 'URL="__ПОДСТАВИТЬ__"' in lines  # адрес подставляется при выкладке
     assert lines[-1] == "main"  # оборванная загрузка скрипта не выполнит его половину
     assert '"$(uname -m)" != "arm64"' in text
+    assert '[ -n "${HOME:-}" ]' in text
     assert 'curl -fL --progress-bar "$URL" -o "$archive"' in text
     assert 'local dir="$HOME/KadrovyAgent"' in text
-    assert 'ditto -x -k "$archive" "$HOME"' in text
-    assert 'mv "$dir" "$dir.old"' in text
     assert 'xattr -dr com.apple.quarantine "$dir" 2>/dev/null || true' in text
     assert 'exec "$dir/Запустить.command"' in text
+    assert 'rm -rf "$dir' not in text  # прежняя установка с базой клиента не удаляется
+    assert "read " not in text  # stdin занят самим скриптом (curl … | bash)
     assert "Documents" not in text and "Downloads" not in text  # Терминалу нужен доступ
 
 
@@ -225,6 +230,7 @@ def test_client_texts():
             "«Конфиденциальность и безопасность»",
             "«Подтвердить вход»",
             "«Разрешить»",
+            "доступ к рабочему столу — нажмите «Разрешить», это нужно только для ярлыка",
             "вымышленных данных",
         ):
             assert words in text, (name, words)
@@ -244,3 +250,115 @@ def test_mac_wheels_target_oldest_supported_macos(tmp_path, monkeypatch):
     i = args.index("--python-platform")
     assert args[i + 1] == "aarch64-apple-darwin"
     assert kwargs["env"]["MACOSX_DEPLOYMENT_TARGET"] == "14.0"
+
+
+arm64_mac = pytest.mark.skipif(
+    sys.platform != "darwin" or os.uname().machine != "arm64",
+    reason="установщик сначала проверяет, что это Mac на Apple Silicon",
+)
+
+
+@contextlib.contextmanager
+def serve(handler):
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        yield server.server_address[1]
+    finally:
+        server.shutdown()
+
+
+def answer(body: bytes, headers: dict | None = None):
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            for name, value in (headers or {}).items():
+                self.send_header(name, value)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_):
+            pass
+
+    return Handler
+
+
+def fake_zip(tmp_path: Path) -> bytes:
+    pkg = tmp_path / "src" / "KadrovyAgent"
+    fake_pkg(pkg)
+    (pkg / "Запустить.command").write_text("#!/bin/bash\necho запущен новый\n")
+    archive = tmp_path / "src.zip"
+    subprocess.run(["ditto", "-c", "-k", "--keepParent", pkg, archive], check=True)
+    return archive.read_bytes()
+
+
+def free_port() -> int:
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def install(tmp_path: Path, home: Path, port: int, agent_port: int | None = None):
+    script = tmp_path / "install-mac.sh"
+    url = f"http://127.0.0.1:{port}/kadrovyi-agent-mac.zip"
+    script.write_text(INSTALLER.read_text("utf-8").replace("__ПОДСТАВИТЬ__", url))
+    env = {"HOME": str(home), "PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "TA_OPEN_BROWSER": "0"}
+    env |= {"TMPDIR": str(tmp_path), "TA_PORT": str(agent_port or free_port())}
+    return subprocess.run(["bash", script], capture_output=True, text=True, env=env)
+
+
+def old_install(home: Path) -> None:
+    fake_pkg(home / "KadrovyAgent")
+    (home / "KadrovyAgent" / "data").mkdir()
+    (home / "KadrovyAgent" / "data" / "app.db").write_text("база клиента")
+
+
+def temp_left(tmp_path: Path) -> list:
+    return list(tmp_path.glob("kadrovyi-agent*"))
+
+
+@arm64_mac
+def test_reinstall_keeps_every_previous_version(tmp_path):
+    """Повторная установка: новая версия на месте, прежние — в KadrovyAgent.old-<время>,
+    ни одна не удаляется, временные файлы убраны."""
+    home = tmp_path / "home"
+    old_install(home)
+    (home / "KadrovyAgent.old-20260101-000000").mkdir()  # ещё более ранняя установка
+    with serve(answer(fake_zip(tmp_path))) as port:
+        out = install(tmp_path, home, port)
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert "запущен новый" in out.stdout
+    olds = sorted(p.name for p in home.glob("KadrovyAgent.old-*"))
+    assert len(olds) == 2 and "KadrovyAgent.old-20260101-000000" in olds
+    assert (home / olds[-1] / "data" / "app.db").read_text() == "база клиента"
+    assert f"Прежняя версия и её данные сохранены в {home / olds[-1]}" in out.stdout
+    assert (home / "KadrovyAgent" / "Как запустить.txt").read_text() == "текст"
+    assert not (home / "KadrovyAgent.new").exists() and not temp_left(tmp_path)
+
+
+@arm64_mac
+def test_broken_archive_leaves_installation_untouched(tmp_path):
+    """Битый или недокачанный ZIP: прежняя установка с базой на месте, мусора нет."""
+    home = tmp_path / "home"
+    old_install(home)
+    with serve(answer(b"not a zip")) as port:
+        out = install(tmp_path, home, port)
+    assert out.returncode != 0
+    assert (home / "KadrovyAgent" / "data" / "app.db").read_text() == "база клиента"
+    assert sorted(p.name for p in home.iterdir()) == ["KadrovyAgent"]
+    assert not temp_left(tmp_path)
+
+
+@arm64_mac
+def test_running_agent_stops_the_installer(tmp_path):
+    """Агент запущен: установщик просит закрыть его окно и ничего не трогает, иначе
+    старый сервер остался бы работать из перенесённой папки."""
+    home = tmp_path / "home"
+    old_install(home)
+    agent = answer(b"ok", {"X-Agent-Instance": "abc"})
+    with serve(agent) as agent_port, serve(answer(fake_zip(tmp_path))) as port:
+        out = install(tmp_path, home, port, agent_port - 3)  # агент на четвёртом порту из 11
+    assert out.returncode == 1
+    assert "Кадровый агент сейчас запущен. Закройте его окно в Терминале" in out.stdout
+    assert sorted(p.name for p in home.iterdir()) == ["KadrovyAgent"]
