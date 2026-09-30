@@ -52,3 +52,17 @@ eval/                набор проверки поиска и эталон р
 2. Заполните `network_errors` (временные сбои — повторяются), `auth_errors` (неверный ключ) и `status_errors` (прочие ответы с кодом: 5xx повторяются, остальное — понятная ошибка).
 3. Добавьте ветку в `get_llm()` и вариант в поле «Сервис» на экране «Настройки» (`app/web/templates/settings.html`).
 4. Тест: адаптер на подменённом клиенте — схема ответа, повтор при сбое сети, неверный ключ (образец — `tests/test_llm.py`).
+
+## Портативные сборки
+
+Обе цели собирает `packaging/build.py`: свой Python из python-build-standalone, зависимости из `uv.lock` без dev-группы, код, веса модели поиска в `data/models` и демо-база. Ключа ИИ в сборках нет.
+
+- **Windows** — `python packaging/build.py --target win64` на раннере `windows-latest`, workflow `portable-win` (вручную или тегом `portable-*`). Итог — `dist/kadrovyi-agent-win64.zip` с «Запустить.bat»; отчёт — [`docs/REPORT-portable.md`](REPORT-portable.md).
+- **Mac с Apple Silicon** — на таком же маке, нужен только uv:
+
+  ```bash
+  uv run python packaging/build.py --target mac-arm64
+  packaging/smoke-mac.sh dist/KadrovyAgent /tmp/kadr-home   # дымовой тест в чистом окружении
+  ```
+
+  Итог — `dist/kadrovyi-agent-mac.zip` (около 900 МБ) и установщик `dist/install-mac.sh`. Перед выкладкой в `install-mac.sh` подставляют адрес ZIP в строку `URL="__ПОДСТАВИТЬ__"`, а в `packaging/message-client-mac.txt` — адрес установщика. Нужна macOS 14 или новее: с этой версии собраны колёса torch. Пробы и замеры — [`docs/REPORT-portable-mac.md`](REPORT-portable-mac.md).

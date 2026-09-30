@@ -23,7 +23,7 @@
 
 ## Сборка
 
-`packaging/build_win.py` на раннере `windows-latest`:
+`packaging/build.py --target win64` на раннере `windows-latest`:
 
 1. Скачивает последний `cpython-3.12.*-x86_64-pc-windows-msvc-install_only_stripped` из релизов astral-sh/python-build-standalone в `KadrovyAgent/python/`.
 2. Ставит зависимости из `uv.lock` без dev-группы (`uv export --frozen --no-dev` и `uv pip install` в этот интерпретатор). Тесты и `.git` в сборку не попадают.

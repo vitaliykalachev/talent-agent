@@ -1,4 +1,5 @@
 import re
+import threading
 import time
 
 import numpy as np
@@ -152,3 +153,28 @@ def test_6_single_surname_searches_contacts(demo):
     assert r.mode == "contacts" and r.hits
     assert all(c.full_name.startswith("Никитин ") for c, _, _ in r.hits)
     assert search(demo, "технолог", Filters()).mode == "meaning"
+
+
+def test_encode_runs_one_at_a_time(monkeypatch):
+    """На Mac torch считает на MPS, и два одновременных encode из разных потоков роняли
+    процесс (Segmentation fault в MetalShaderLibrary): векторы строятся по очереди."""
+    busy, overlaps = [], []
+
+    class Model:
+        prompts = {"query": "search_query: "}
+
+        def encode(self, texts, **_):
+            overlaps.append(len(busy))
+            busy.append(1)
+            time.sleep(0.05)
+            busy.pop()
+            return np.zeros((len(texts), 3))
+
+    monkeypatch.setattr(embed, "model_name", lambda: "m")
+    monkeypatch.setattr(embed, "_model", lambda name: Model())
+    threads = [threading.Thread(target=embed.encode, args=(["x"], "query")) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert overlaps == [0, 0, 0, 0]

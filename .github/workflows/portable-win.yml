@@ -28,7 +28,7 @@ jobs:
       - uses: astral-sh/setup-uv@v6
 
       - name: Сборка
-        run: python packaging/build_win.py
+        run: python packaging/build.py --target win64
 
       - name: Распаковка Expand-Archive
         shell: pwsh
