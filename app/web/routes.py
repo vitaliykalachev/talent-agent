@@ -11,7 +11,7 @@ from datetime import date
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from sqlalchemy import delete, func, select
@@ -893,9 +893,26 @@ async def settings_check(request: Request):
     return _settings_page(request, message, typed=typed)
 
 
+FOREIGN = "Запрос пришёл не из программы."
+
+
+def foreign(request: Request) -> PlainTextResponse | None:
+    """Необратимые кнопки («Удалить ключ», очистка базы) — только со своих страниц: чужой
+    сайт в том же браузере мог бы прислать форму на 127.0.0.1. Браузер помечает такой
+    запрос заголовками Sec-Fetch-Site и Origin; без них (curl, тесты) запрос свой."""
+    site = request.headers.get("sec-fetch-site")
+    origin = request.headers.get("origin")
+    ours = f"{request.url.scheme}://{request.headers.get('host', '')}"
+    if site not in (None, "same-origin", "none") or origin not in (None, ours):
+        return PlainTextResponse(FOREIGN, status_code=403)
+    return None
+
+
 @router.post("/settings/key-delete", response_class=HTMLResponse)
 def settings_key_delete(request: Request):
     """«Удалить ключ»: пустое поле ключ не стирает, поэтому отдельная кнопка."""
+    if refused := foreign(request):
+        return refused
     config.save({"llm_api_key": ""})
     if config.has_recorded():  # демо: без ключа — обратно на записанные ответы
         config.save({"llm_provider": "mock"})
@@ -921,6 +938,8 @@ async def settings_mail_test(request: Request):
 async def settings_clear(request: Request):
     """Очистка базы в два шага: первый показывает подтверждение, второй («Да, удалить»,
     поле confirm) удаляет данные. Настройки и ключ остаются."""
+    if refused := foreign(request):
+        return refused
     form = await request.form()
     if form.get("confirm") != "1":
         return _settings_page(request, confirm_clear=True)

@@ -251,3 +251,30 @@ def test_clear_resets_word_index(session, do_import):
     load("Кровельщик")
     assert search.lexical(session, "сварщик") == []
     assert len(search.lexical(session, "кровельщик")) == 3
+
+
+@pytest.mark.parametrize("path", ["/settings/clear", "/settings/key-delete"])
+def test_irreversible_buttons_refuse_other_sites(web, session, do_import, path):
+    config.save({"llm_api_key": "ключ-клиента"})
+    do_import(None, [RESUMES])
+    data = {"confirm": "1"}
+    for headers in (
+        {"Origin": "https://evil.example"},
+        {"Sec-Fetch-Site": "cross-site"},
+        {"Origin": "https://evil.example", "Sec-Fetch-Site": "same-origin"},
+    ):
+        r = web.post(path, data=data, headers=headers)
+        assert r.status_code == 403 and "Запрос пришёл не из программы" in r.text, headers
+    assert counts(session)["Candidate"] == 5 and config.get("llm_api_key") == "ключ-клиента"
+    own = {"Origin": "http://testserver", "Sec-Fetch-Site": "same-origin"}
+    assert web.post(path, data=data, headers=own).status_code == 200
+    if path == "/settings/clear":
+        assert counts(session)["Candidate"] == 0
+    else:
+        assert config.get("llm_api_key") == ""
+
+
+def test_form_without_origin_still_works(web, session, do_import):
+    do_import(None, [RESUMES])
+    assert web.post("/settings/clear", data={"confirm": "1"}).status_code == 200
+    assert counts(session)["Candidate"] == 0
