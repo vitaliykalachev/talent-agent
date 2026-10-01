@@ -338,6 +338,54 @@ def test_reinstall_keeps_every_previous_version(tmp_path):
 
 
 @arm64_mac
+def test_update_copies_client_data_instead_of_demo(tmp_path):
+    """Обновление: в новую версию копируется папка data прежней (база, загрузки) вместо
+    демо-базы из архива; веса модели — из архива; прежняя версия остаётся с данными."""
+    home = tmp_path / "home"
+    old_install(home)
+    old_data = home / "KadrovyAgent" / "data"
+    (old_data / "app.db-wal").write_text("журнал базы")
+    (old_data / "uploads" / "1").mkdir(parents=True)
+    (old_data / "uploads" / "1" / "table.xlsx").write_text("выгрузка клиента")
+    (old_data / "models").mkdir()
+    (old_data / "models" / "old.bin").write_text("старые веса")
+    (old_data / "agent.lock").write_text("")
+    pkg = tmp_path / "src" / "KadrovyAgent"
+    (pkg / "data" / "source").mkdir(parents=True)
+    (pkg / "data" / "app.db").write_text("демо-база")
+    (pkg / "data" / "source" / "crm.csv").write_text("демо")
+    (pkg / "data" / "models").mkdir()
+    (pkg / "data" / "models" / "new.bin").write_text("новые веса")
+    with serve(answer(fake_zip(tmp_path))) as port:
+        out = install(tmp_path, home, port)
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert "Ваши данные перенесены." in out.stdout
+    data = home / "KadrovyAgent" / "data"
+    assert sorted(p.name for p in data.iterdir()) == ["app.db", "app.db-wal", "models", "uploads"]
+    assert (data / "app.db").read_text() == "база клиента"
+    assert (data / "uploads" / "1" / "table.xlsx").read_text() == "выгрузка клиента"
+    assert [p.name for p in (data / "models").iterdir()] == ["new.bin"]
+    [old] = home.glob("KadrovyAgent.old-*")
+    assert (old / "data" / "app.db").read_text() == "база клиента"  # копия, а не перенос
+    assert (old / "data" / "uploads" / "1" / "table.xlsx").exists()
+
+
+@arm64_mac
+def test_first_install_keeps_demo_base(tmp_path):
+    """Первая установка: переносить нечего, демо-база из архива на месте."""
+    home = tmp_path / "home"
+    home.mkdir()
+    pkg = tmp_path / "src" / "KadrovyAgent"
+    (pkg / "data").mkdir(parents=True)
+    (pkg / "data" / "app.db").write_text("демо-база")
+    with serve(answer(fake_zip(tmp_path))) as port:
+        out = install(tmp_path, home, port)
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert "Ваши данные перенесены" not in out.stdout
+    assert (home / "KadrovyAgent" / "data" / "app.db").read_text() == "демо-база"
+
+
+@arm64_mac
 def test_broken_archive_leaves_installation_untouched(tmp_path):
     """Битый или недокачанный ZIP: прежняя установка с базой на месте, мусора нет."""
     home = tmp_path / "home"

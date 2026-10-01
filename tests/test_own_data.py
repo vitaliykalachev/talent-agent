@@ -210,3 +210,21 @@ def test_parse_limit_setting_validated(web):
     assert "Лимит разбора — целое число" in page.text and config.get("parse_limit") == "200"
     web.post("/settings", data={"parse_limit": "50"})
     assert config.get("parse_limit") == "50"
+
+
+def test_old_base_upgraded_on_start(tmp_path):
+    """Обновление переносит базу прежней версии: при старте она догоняет схему."""
+    from alembic import command
+    from alembic.config import Config
+    from sqlalchemy import create_engine, text
+
+    folder = tmp_path / "old"
+    folder.mkdir()
+    cfg = Config(str(ROOT / "alembic.ini"))
+    cfg.set_main_option("script_location", str(ROOT / "migrations"))
+    cfg.set_main_option("sqlalchemy.url", f"sqlite:///{folder / 'app.db'}")
+    command.upgrade(cfg, "0001")
+    with TestClient(main.create_app(folder)) as c:
+        assert c.get("/settings").status_code == 200
+    with create_engine(f"sqlite:///{folder / 'app.db'}").connect() as conn:
+        assert conn.scalar(text("select version_num from alembic_version")) == "0004"
