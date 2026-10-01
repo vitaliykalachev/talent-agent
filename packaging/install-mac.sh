@@ -54,9 +54,9 @@ main() {
   xattr -dr com.apple.quarantine "$new" 2>/dev/null || true
   # Данные клиента — из прежней версии вместо демо-базы из архива. Копия, а не перенос:
   # прежняя версия со своими данными остаётся целой. Копируем ещё в распакованную папку:
-  # не хватит места — она уберётся при выходе, а установленная версия не тронута.
+  # не скопировалось (место, права) — она уберётся при выходе, установленная не тронута.
   # Веса модели поиска берём из нового архива.
-  local data="$new/KadrovyAgent/data" item kept=""
+  local data="$new/KadrovyAgent/data" item kept="" err
   if [ -f "$dir/data/app.db" ]; then
     mkdir -p "$data"
     for item in "$data"/*; do
@@ -65,10 +65,12 @@ main() {
     for item in "$dir/data"/*; do
       case "$(basename "$item")" in
         models | agent.lock) ;;
-        *) cp -R "$item" "$data/" || {
-          echo "Не удалось перенести ваши данные: на диске мало места. Прежняя версия не тронута, освободите место и повторите команду."
-          exit 1
-        } ;;
+        *)
+          if ! err=$(cp -R "$item" "$data/" 2>&1); then
+            echo "Не удалось перенести данные (${err%%$'\n'*}). Прежняя версия не тронута."
+            exit 1
+          fi
+          ;;
       esac
     done
     kept=1

@@ -394,6 +394,29 @@ def test_update_copies_client_data_instead_of_demo(tmp_path):
 
 
 @arm64_mac
+def test_failed_copy_names_the_reason_and_keeps_old(tmp_path):
+    """cp не смог скопировать данные: установщик называет причину из cp, а не гадает
+    про место на диске; установленная версия остаётся как была."""
+    home = tmp_path / "home"
+    old_install(home)
+    locked = home / "KadrovyAgent" / "data" / "uploads"
+    locked.mkdir()
+    (locked / "table.xlsx").write_text("выгрузка")
+    (locked / "table.xlsx").chmod(0)
+    try:
+        with serve(answer(fake_zip(tmp_path))) as port:
+            out = install(tmp_path, home, port)
+    finally:
+        (locked / "table.xlsx").chmod(0o644)
+    assert out.returncode == 1
+    assert "Не удалось перенести данные (" in out.stdout and "Permission denied" in out.stdout
+    assert "Прежняя версия не тронута." in out.stdout and "мало места" not in out.stdout
+    assert sorted(p.name for p in home.iterdir()) == ["KadrovyAgent"]
+    assert (home / "KadrovyAgent" / "data" / "app.db").read_text() == "база клиента"
+    assert not temp_left(tmp_path)
+
+
+@arm64_mac
 def test_first_install_keeps_demo_base(tmp_path):
     """Первая установка: переносить нечего, демо-база из архива на месте."""
     home = tmp_path / "home"
