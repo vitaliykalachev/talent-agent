@@ -752,12 +752,18 @@ def _memory() -> list:
 
 
 def _clear_label() -> str:
-    """Подпись кнопки очистки: в демо — что именно удалится."""
+    """Подпись кнопки очистки: в демо — что именно удалится. Демо — одна загрузка и одна
+    вакансия; есть ещё (рекрутер добавил своё в демо-базу, например в 0.2) — удалится
+    и своё, поэтому подпись не называет всё вымышленным."""
     if not config.has_demo_data():
         return "Очистить базу"
     with db.SessionLocal() as s:
         n = s.scalar(select(func.count(Candidate.id)).where(active()))
+        batches = s.scalar(select(func.count(ImportBatch.id)))
+        vacancies = s.scalar(select(func.count(Vacancy.id)))
     people = present.count(n, "кандидат", "кандидата", "кандидатов")
+    if batches > 1 or vacancies > 1:
+        return f"Удалить все данные: {people}, среди них вымышленные из демо"
     return f"Удалить вымышленные данные ({people} и демо-вакансия)"
 
 

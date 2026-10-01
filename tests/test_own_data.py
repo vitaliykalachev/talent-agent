@@ -278,3 +278,14 @@ def test_form_without_origin_still_works(web, session, do_import):
     do_import(None, [RESUMES])
     assert web.post("/settings/clear", data={"confirm": "1"}).status_code == 200
     assert counts(session)["Candidate"] == 0
+
+
+def test_demo_with_own_data_is_not_called_fictional(web, session, do_import, tmp_path):
+    """После обновления с 0.2 в демо-базе бывают и свои кандидаты: кнопка не называет
+    всё вымышленным."""
+    config.save({"llm_provider": "mock", "llm_fixtures": config.RECORDED})
+    do_import(None, [RESUMES])  # демо
+    do_import(resume_xlsx(tmp_path / "crm.xlsx"))  # своя выгрузка
+    page = web.get("/settings").text
+    assert "Удалить все данные: 11\xa0кандидатов, среди них вымышленные из демо" in page
+    assert "Удалить вымышленные данные" not in page
