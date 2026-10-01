@@ -228,3 +228,21 @@ def test_old_base_upgraded_on_start(tmp_path):
         assert c.get("/settings").status_code == 200
     with create_engine(f"sqlite:///{folder / 'app.db'}").connect() as conn:
         assert conn.scalar(text("select version_num from alembic_version")) == "0004"
+
+
+def test_clear_resets_word_index(session, do_import):
+    """Очистка → столько же записей с теми же id, но другим текстом: поиск по словам
+    ищет по новому тексту, а не по индексу прежней базы."""
+    from app import search
+
+    def load(word: str) -> None:
+        for i in range(3):
+            session.add(Candidate(full_name=f"Иванов{i} Иван", raw_text=f"{word} стаж {i} лет"))
+        session.commit()
+
+    load("Сварщик")
+    assert len(search.lexical(session, "сварщик")) == 3
+    wipe.clear_base()
+    load("Кровельщик")
+    assert search.lexical(session, "сварщик") == []
+    assert len(search.lexical(session, "кровельщик")) == 3
