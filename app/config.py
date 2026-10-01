@@ -42,6 +42,7 @@ DEFAULTS = {
     "smtp_password": "",
     "smtp_to": "",
     "public_url": "http://127.0.0.1:8000",  # адрес приложения для ссылок в письме
+    "demo_cleared": "",  # «1» — вымышленные данные демо удалены кнопкой в «Настройках»
 }
 ENV = {
     "llm_provider": "LLM_PROVIDER",
@@ -77,6 +78,11 @@ def has_recorded() -> bool:
 def is_demo() -> bool:
     """Демо-режим: база демо и работают записанные ответы (ключ ещё не вставлен)."""
     return get("llm_provider") == "mock" and has_recorded()
+
+
+def has_demo_data() -> bool:
+    """В базе вымышленные данные демо: база собрана как демо и их ещё не удалили."""
+    return has_recorded() and get("demo_cleared") != "1"
 
 
 def number(key: str) -> float:

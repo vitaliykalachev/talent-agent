@@ -17,7 +17,7 @@ from pydantic import BaseModel
 from sqlalchemy import delete, func, select
 from starlette.datastructures import UploadFile
 
-from app import config, db, evaluate, mail, morning, parse, schedule
+from app import config, db, evaluate, mail, morning, parse, schedule, wipe
 from app.anonymize import anonymize
 from app.importer.dedup import auto_merged, open_pairs
 from app.importer.mapping import FIELDS, confidence
@@ -185,7 +185,9 @@ def home(request: Request):
         with_errors=with_errors,
         flow=flow,
         has_key=bool(config.get("llm_api_key")) or config.get("llm_provider") == "mock",
-        demo=config.is_demo(),
+        demo=config.is_demo() and config.has_demo_data(),
+        # демо-данные удалены, а ключа нет: свои резюме на записанных ответах не разобрать
+        need_key=config.is_demo() and not config.has_demo_data(),
     )
 
 
@@ -740,15 +742,31 @@ def _memory() -> list:
         ).all()
 
 
+def _clear_label() -> str:
+    """Подпись кнопки очистки: в демо — что именно удалится."""
+    if not config.has_demo_data():
+        return "Очистить базу"
+    with db.SessionLocal() as s:
+        n = s.scalar(select(func.count(Candidate.id)).where(active()))
+    people = present.count(n, "кандидат", "кандидата", "кандидатов")
+    return f"Удалить вымышленные данные ({people} и демо-вакансия)"
+
+
 def _settings_page(
-    request: Request, message: str | None = None, error: bool = False, typed: dict | None = None
+    request: Request,
+    message: str | None = None,
+    error: bool = False,
+    typed: dict | None = None,
+    confirm_clear: bool = False,
 ):
     """`typed` — несохранённые значения из формы: после проверки подключения они остаются
-    в полях, а не заменяются сохранёнными."""
+    в полях, а не заменяются сохранёнными. `confirm_clear` — второй шаг очистки базы."""
     values = {key: (typed or {}).get(key) or config.get(key) for key in SETTING_FIELDS}
     return render(
         request,
         "settings.html",
+        clear_label=_clear_label(),
+        confirm_clear=confirm_clear,
         values=values,
         has_key=bool(config.get("llm_api_key")),
         has_password=bool(config.get("smtp_password")),
@@ -868,6 +886,17 @@ async def settings_mail_test(request: Request):
     if error:
         return _settings_page(request, error, error=True)
     return _settings_page(request, f"Пробное письмо ушло на {config.get('smtp_to')}.")
+
+
+@router.post("/settings/clear", response_class=HTMLResponse)
+async def settings_clear(request: Request):
+    """Очистка базы в два шага: первый показывает подтверждение, второй («Да, удалить»,
+    поле confirm) удаляет данные. Настройки и ключ остаются."""
+    form = await request.form()
+    if form.get("confirm") != "1":
+        return _settings_page(request, confirm_clear=True)
+    wipe.clear_base()
+    return RedirectResponse("/", status_code=303)
 
 
 @router.post("/feedback/clear")

@@ -118,6 +118,12 @@ def index() -> tuple[np.ndarray, np.ndarray]:
         return _index["ids"], _index["matrix"]
 
 
+def reset() -> None:
+    """База очищена: матрица пустая, следующий поиск перечитает её из БД."""
+    with _lock:
+        _index.update(key=None, ids=np.zeros(0, dtype=np.int64), matrix=np.zeros((0, 0)))
+
+
 def _add(ids: list[int], vectors: np.ndarray) -> None:
     old_ids, old_matrix = index()
     with _lock:

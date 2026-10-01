@@ -58,6 +58,8 @@ def run_job(job_id: int) -> None:
         log.exception("задача %s упала", job_id)
         with db.SessionLocal() as session:
             job = session.get(Job, job_id)
+            if job is None:  # базу очистили, пока задача шла: записывать итог некуда
+                return
             job.status = "failed"
             job.error = f"{type(exc).__name__}: {exc}"
             job.finished_at = datetime.now()

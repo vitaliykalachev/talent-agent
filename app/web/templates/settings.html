@@ -62,6 +62,21 @@
   </details>
 </form>
 
+<section class="card" id="clear">
+  <h4>Данные</h4>
+  {% if confirm_clear %}
+  <div class="callout warn"><p>Удалить всех кандидатов, вакансии, оценки и загрузки? Вернуть их не получится. Ключ, адрес сервиса, расписание и почта останутся.</p></div>
+  <form method="post" action="/settings/clear" class="actions">
+    <input type="hidden" name="confirm" value="1">
+    <button class="button" type="submit">Да, удалить</button>
+    <a class="button ghost" href="/settings#clear">Отмена</a>
+  </form>
+  {% else %}
+  <p>Перед работой со своей базой уберите то, что в ней сейчас. Настройки и ключ останутся.</p>
+  <form method="post" action="/settings/clear"><button class="button ghost" type="submit">{{ clear_label }}</button></form>
+  {% endif %}
+</section>
+
 <form class="card settings" method="post" action="/settings" id="night">
   <h4>Ночной прогон</h4>
   <p>Ночью агент помечает устаревшие резюме, ищет возможные дубли, готовит новые резюме к поиску и оценивает вакансии с отметкой «Оценивать каждую ночь». Утром отчёт ждёт на экране «Утро».</p>
