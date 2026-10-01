@@ -98,6 +98,7 @@ def test_clear_asks_first_then_keeps_settings(web, session, do_import):
     config.save(KEPT)
     full_base(session, do_import)
     assert (db.data_dir / "uploads").exists()
+    assert 'action="/settings/clear#clear"' in web.get("/settings").text  # подтверждение на экране
     page = web.post("/settings/clear")
     assert page.status_code == 200 and "Да, удалить" in page.text
     assert counts(session)["Candidate"] == 5  # первый шаг ничего не удаляет

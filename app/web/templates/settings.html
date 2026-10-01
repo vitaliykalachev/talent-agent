@@ -78,7 +78,8 @@
   </form>
   {% else %}
   <p>Перед работой со своей базой уберите то, что в ней сейчас. Настройки и ключ останутся.</p>
-  <form method="post" action="/settings/clear"><button class="button ghost" type="submit">{{ clear_label }}</button></form>
+  {# якорь в адресе формы: страница с подтверждением открывается на этом блоке #}
+  <form method="post" action="/settings/clear#clear"><button class="button ghost" type="submit">{{ clear_label }}</button></form>
   {% endif %}
 </section>
 
