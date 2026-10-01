@@ -809,6 +809,21 @@ async def settings_save(request: Request):
     return _settings_page(request, "Сохранено.")
 
 
+MAX_LIMIT = 1_000_000
+LIMIT_ERROR = "Лимит разбора — целое число от 0 до 1 000 000, например 200; 0 — без лимита."
+
+
+def _parse_limit(text: str) -> str | None:
+    """Лимит разбора из формы: пусто — по умолчанию, не число или больше миллиона — None."""
+    if not text:
+        return config.DEFAULTS["parse_limit"]
+    try:
+        limit = int(text)
+    except ValueError:  # «²», «двести», «1.5»
+        return None
+    return str(limit) if 0 <= limit <= MAX_LIMIT else None
+
+
 def _save_settings(form) -> str | None:
     """Сохраняет присланные поля «Настроек»; ошибка ввода — текст, ничего не сохранено."""
     values = {key: str(form.get(key, "")).strip() for key in SETTING_FIELDS if key in form}
@@ -819,8 +834,11 @@ def _save_settings(form) -> str | None:
         return "Время укажите как 02:00."
     if values.get("night_days", "daily") not in schedule.DAYS:
         values.pop("night_days")
-    if "parse_limit" in values and not values["parse_limit"].isdigit():
-        return "Лимит разбора — целое число, например 200; 0 — без лимита."
+    if "parse_limit" in values:
+        limit = _parse_limit(values["parse_limit"])
+        if limit is None:
+            return LIMIT_ERROR
+        values["parse_limit"] = limit
     if values.get("smtp_port") and not values["smtp_port"].isdigit():
         return "Порт почтового сервера — число, например 587."
     model_changed = values.get("embed_model") not in (None, config.get("embed_model"))

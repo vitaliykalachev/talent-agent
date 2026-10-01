@@ -206,10 +206,15 @@ def test_parse_limit_zero_means_all(web, session, do_import):
 
 def test_parse_limit_setting_validated(web):
     assert config.get("parse_limit") == "200"
-    page = web.post("/settings", data={"parse_limit": "двести"})
-    assert "Лимит разбора — целое число" in page.text and config.get("parse_limit") == "200"
+    for bad in ("двести", "²", "99999999999999999999", "1000001", "-5", "1.5"):
+        page = web.post("/settings", data={"parse_limit": bad})
+        assert "Лимит разбора — целое число" in page.text, bad
+        assert config.get("parse_limit") == "200", bad
+    assert web.get("/parse", params={"scope": "all"}).status_code == 200
     web.post("/settings", data={"parse_limit": "50"})
     assert config.get("parse_limit") == "50"
+    web.post("/settings", data={"parse_limit": ""})  # пустое поле — значение по умолчанию
+    assert config.get("parse_limit") == "200"
 
 
 def test_old_base_upgraded_on_start(tmp_path):
