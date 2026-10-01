@@ -31,6 +31,7 @@ DEFAULTS = {
     "price_eval_in": "2",
     "price_eval_out": "10",
     "usd_rub": "84",
+    "parse_limit": "200",  # резюме за один запуск «Начать разбор всей базы»; 0 — без лимита
     "embed_model": "sergeyzh/BERTA",  # запасной вариант: intfloat/multilingual-e5-base
     # Ночной прогон: время и дни (daily | weekdays); cron собирает app/schedule.py.
     "night_time": "02:00",

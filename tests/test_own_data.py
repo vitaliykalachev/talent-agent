@@ -1,4 +1,4 @@
-"""Версия 0.3, «свои данные»: очистка базы с сохранением настроек."""
+"""Версия 0.3, «свои данные»: очистка базы с сохранением настроек и лимит разбора."""
 
 from pathlib import Path
 
@@ -35,6 +35,7 @@ KEPT = {
     "night_time": "03:30",
     "night_days": "weekdays",
     "smtp_to": "hr@example.ru",
+    "parse_limit": "150",
 }
 
 
@@ -177,3 +178,35 @@ def test_night_run_on_empty_base(session):
     session.expire_all()
     run = session.get(NightRun, run.id)
     assert run.status == "done" and run.summary["checked_resumes"] == 0
+
+
+def test_parse_limit_per_run(web, session, do_import):
+    config.save({"llm_provider": "mock", "llm_fixtures": str(FIXTURES), "parse_limit": "2"})
+    do_import(None, [RESUMES])
+    confirm = web.get("/parse", params={"scope": "all"}).text
+    assert "Агент разберёт 2 из 5 резюме" in confirm and "следующим запуском" in confirm
+    web.post("/parse", data={"scope": "all"})
+    job = session.scalar(select(Job).where(Job.kind == "parse"))
+    assert len(job.payload["ids"]) == 2
+    run_pending()
+    assert "Разобрано 2 из 5, остальные — следующим запуском." in web.get("/").text
+    assert len(parse.waiting_ids(session)) == 3
+
+
+def test_parse_limit_zero_means_all(web, session, do_import):
+    config.save({"llm_provider": "mock", "llm_fixtures": str(FIXTURES), "parse_limit": "0"})
+    do_import(None, [RESUMES])
+    confirm = web.get("/parse", params={"scope": "all"}).text
+    assert "Агент разберёт 5 резюме" in confirm and "следующим запуском" not in confirm
+    web.post("/parse", data={"scope": "all"})
+    run_pending()
+    assert parse.waiting_ids(session) == []
+    assert "Разобрано 5\xa0резюме" in web.get("/").text
+
+
+def test_parse_limit_setting_validated(web):
+    assert config.get("parse_limit") == "200"
+    page = web.post("/settings", data={"parse_limit": "двести"})
+    assert "Лимит разбора — целое число" in page.text and config.get("parse_limit") == "200"
+    web.post("/settings", data={"parse_limit": "50"})
+    assert config.get("parse_limit") == "50"

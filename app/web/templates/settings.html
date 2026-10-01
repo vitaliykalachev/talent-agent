@@ -51,6 +51,11 @@
     <div class="field"><label for="price_eval_out">Оценка: ответ</label><input id="price_eval_out" type="text" name="price_eval_out" value="{{ values.price_eval_out }}"></div>
     <div class="field"><label for="usd_rub">Курс доллара, ₽</label><input id="usd_rub" type="text" name="usd_rub" value="{{ values.usd_rub }}"></div>
   </div>
+  <div class="field">
+    <label for="parse_limit">Лимит разбора за один запуск</label>
+    <input id="parse_limit" type="text" inputmode="numeric" name="parse_limit" value="{{ values.parse_limit }}">
+    <small>Сколько резюме агент разбирает по кнопке «Начать разбор всей базы», остальные — следующим запуском. Так баланс сервиса не уйдёт за один раз. 0 — без лимита.</small>
+  </div>
 
   <h4>Поиск по смыслу</h4>
   <div class="field">

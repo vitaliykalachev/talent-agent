@@ -32,7 +32,11 @@
   <p><a class="button ghost" href="/jobs/{{ last.id }}/problems">Показать список</a>
      <a class="button" href="/parse?scope=retry&job={{ last.id }}">Разобрать ещё раз</a></p>
   {% else %}
+  {% if last.payload.waiting %}
+  <p>Разобрано {{ last.total|num }} из {{ last.payload.waiting|num }}, остальные — следующим запуском. <a href="/candidates">Искать кандидатов</a></p>
+  {% else %}
   <p>Разобрано {{ last.total|count("резюме", "резюме", "резюме") }}{% if last.payload.trial %} для проверки{% endif %}. <a href="/candidates">Искать кандидатов</a></p>
+  {% endif %}
   {% endif %}
 </div>
 {% endif %}
