@@ -38,6 +38,7 @@ def test_targets_keep_windows_and_add_mac():
     assert MAC.launcher == {
         "launcher.command": "Запустить.command",
         "readme-client-mac.txt": "Как запустить.txt",
+        "readme-own-data.txt": "Свои данные.txt",
     }
     workflow = (ROOT / ".github" / "workflows" / "portable-win.yml").read_text("utf-8")
     assert "python packaging/build.py --target win64" in workflow
@@ -237,6 +238,28 @@ def test_client_texts():
         assert text.index("«Терминал»") < text.index("Если с командой не вышло")
     message = (PACKAGING / "message-client-mac.txt").read_text("utf-8")
     assert "curl -fsSL __АДРЕС__/install-mac.sh | bash" in message
+
+
+def test_own_data_texts():
+    """«Свои данные.txt» и сообщение: кнопки называются так же, как в интерфейсе."""
+    for name in ("readme-own-data.txt", "message-own-data.txt"):
+        text = (PACKAGING / name).read_text("utf-8")
+        for words in (
+            "же команд",
+            "«Настройки»",
+            "«Проверить подключение»",
+            "«Удалить вымышленные данные»",
+            "«Загрузка базы»",
+            "«Загрузить и проверить колонки»",
+            "«Текст резюме»",
+            "«Разобрать 20 для проверки»",
+            "«Начать разбор всей базы»",
+            "не больше 200",
+            "«Новая вакансия»",
+            "одна строка — один человек",
+        ):
+            assert words in text, (name, words)
+        assert '"' not in text and " - " not in text and "..." not in text
 
 
 def test_mac_wheels_target_oldest_supported_macos(tmp_path, monkeypatch):
