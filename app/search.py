@@ -133,6 +133,12 @@ def _bm25_index(session: Session):
         return _bm25["ids"], _bm25["retriever"]
 
 
+def reset() -> None:
+    """База очищена: id в SQLite начнутся заново, и тот же ключ указал бы на старый индекс."""
+    with _bm25_lock:
+        _bm25.update(key=None, ids=[], retriever=None)
+
+
 def lexical(session: Session, query: str, k: int = POOL) -> list[int]:
     """До k лучших по BM25; кандидаты без единого общего слова с запросом не берутся."""
     ids, retriever = _bm25_index(session)

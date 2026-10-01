@@ -38,6 +38,7 @@ def test_targets_keep_windows_and_add_mac():
     assert MAC.launcher == {
         "launcher.command": "Запустить.command",
         "readme-client-mac.txt": "Как запустить.txt",
+        "readme-own-data.txt": "Свои данные.txt",
     }
     workflow = (ROOT / ".github" / "workflows" / "portable-win.yml").read_text("utf-8")
     assert "python packaging/build.py --target win64" in workflow
@@ -239,6 +240,28 @@ def test_client_texts():
     assert "curl -fsSL __АДРЕС__/install-mac.sh | bash" in message
 
 
+def test_own_data_texts():
+    """«Свои данные.txt» и сообщение: кнопки называются так же, как в интерфейсе."""
+    for name in ("readme-own-data.txt", "message-own-data.txt"):
+        text = (PACKAGING / name).read_text("utf-8")
+        for words in (
+            "же команд",
+            "«Настройки»",
+            "«Проверить подключение»",
+            "«Удалить вымышленные данные»",
+            "«Загрузка базы»",
+            "«Загрузить и проверить колонки»",
+            "«Текст резюме»",
+            "«Разобрать 20 для проверки»",
+            "«Начать разбор всей базы»",
+            "не больше 200",
+            "«Новая вакансия»",
+            "одна строка — один человек",
+        ):
+            assert words in text, (name, words)
+        assert '"' not in text and " - " not in text and "..." not in text
+
+
 def test_mac_wheels_target_oldest_supported_macos(tmp_path, monkeypatch):
     """Сборка идёт на новой macOS, а клиент может сидеть на 14: колёса выбираются под 14."""
     calls = []
@@ -335,6 +358,77 @@ def test_reinstall_keeps_every_previous_version(tmp_path):
     assert f"Прежняя версия и её данные сохранены в {home / olds[-1]}" in out.stdout
     assert (home / "KadrovyAgent" / "Как запустить.txt").read_text() == "текст"
     assert not (home / "KadrovyAgent.new").exists() and not temp_left(tmp_path)
+
+
+@arm64_mac
+def test_update_copies_client_data_instead_of_demo(tmp_path):
+    """Обновление: в новую версию копируется папка data прежней (база, загрузки) вместо
+    демо-базы из архива; веса модели — из архива; прежняя версия остаётся с данными."""
+    home = tmp_path / "home"
+    old_install(home)
+    old_data = home / "KadrovyAgent" / "data"
+    (old_data / "app.db-wal").write_text("журнал базы")
+    (old_data / "uploads" / "1").mkdir(parents=True)
+    (old_data / "uploads" / "1" / "table.xlsx").write_text("выгрузка клиента")
+    (old_data / "models").mkdir()
+    (old_data / "models" / "old.bin").write_text("старые веса")
+    (old_data / "agent.lock").write_text("")
+    pkg = tmp_path / "src" / "KadrovyAgent"
+    (pkg / "data" / "source").mkdir(parents=True)
+    (pkg / "data" / "app.db").write_text("демо-база")
+    (pkg / "data" / "source" / "crm.csv").write_text("демо")
+    (pkg / "data" / "models").mkdir()
+    (pkg / "data" / "models" / "new.bin").write_text("новые веса")
+    with serve(answer(fake_zip(tmp_path))) as port:
+        out = install(tmp_path, home, port)
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert "Ваши данные перенесены." in out.stdout
+    data = home / "KadrovyAgent" / "data"
+    assert sorted(p.name for p in data.iterdir()) == ["app.db", "app.db-wal", "models", "uploads"]
+    assert (data / "app.db").read_text() == "база клиента"
+    assert (data / "uploads" / "1" / "table.xlsx").read_text() == "выгрузка клиента"
+    assert [p.name for p in (data / "models").iterdir()] == ["new.bin"]
+    [old] = home.glob("KadrovyAgent.old-*")
+    assert (old / "data" / "app.db").read_text() == "база клиента"  # копия, а не перенос
+    assert (old / "data" / "uploads" / "1" / "table.xlsx").exists()
+
+
+@arm64_mac
+def test_failed_copy_names_the_reason_and_keeps_old(tmp_path):
+    """cp не смог скопировать данные: установщик называет причину из cp, а не гадает
+    про место на диске; установленная версия остаётся как была."""
+    home = tmp_path / "home"
+    old_install(home)
+    locked = home / "KadrovyAgent" / "data" / "uploads"
+    locked.mkdir()
+    (locked / "table.xlsx").write_text("выгрузка")
+    (locked / "table.xlsx").chmod(0)
+    try:
+        with serve(answer(fake_zip(tmp_path))) as port:
+            out = install(tmp_path, home, port)
+    finally:
+        (locked / "table.xlsx").chmod(0o644)
+    assert out.returncode == 1
+    assert "Не удалось перенести данные (" in out.stdout and "Permission denied" in out.stdout
+    assert "Прежняя версия не тронута." in out.stdout and "мало места" not in out.stdout
+    assert sorted(p.name for p in home.iterdir()) == ["KadrovyAgent"]
+    assert (home / "KadrovyAgent" / "data" / "app.db").read_text() == "база клиента"
+    assert not temp_left(tmp_path)
+
+
+@arm64_mac
+def test_first_install_keeps_demo_base(tmp_path):
+    """Первая установка: переносить нечего, демо-база из архива на месте."""
+    home = tmp_path / "home"
+    home.mkdir()
+    pkg = tmp_path / "src" / "KadrovyAgent"
+    (pkg / "data").mkdir(parents=True)
+    (pkg / "data" / "app.db").write_text("демо-база")
+    with serve(answer(fake_zip(tmp_path))) as port:
+        out = install(tmp_path, home, port)
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert "Ваши данные перенесены" not in out.stdout
+    assert (home / "KadrovyAgent" / "data" / "app.db").read_text() == "демо-база"
 
 
 @arm64_mac

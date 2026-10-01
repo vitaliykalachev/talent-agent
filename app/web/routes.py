@@ -11,13 +11,13 @@ from datetime import date
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from sqlalchemy import delete, func, select
 from starlette.datastructures import UploadFile
 
-from app import config, db, evaluate, mail, morning, parse, schedule
+from app import config, db, evaluate, mail, morning, parse, schedule, wipe
 from app.anonymize import anonymize
 from app.importer.dedup import auto_merged, open_pairs
 from app.importer.mapping import FIELDS, confidence
@@ -185,7 +185,9 @@ def home(request: Request):
         with_errors=with_errors,
         flow=flow,
         has_key=bool(config.get("llm_api_key")) or config.get("llm_provider") == "mock",
-        demo=config.is_demo(),
+        demo=config.is_demo() and config.has_demo_data(),
+        # демо-данные удалены, а ключа нет: свои резюме на записанных ответах не разобрать
+        need_key=config.is_demo() and not config.has_demo_data(),
     )
 
 
@@ -390,13 +392,16 @@ def _scope_ids(s, scope: str, job_id: int | None = None) -> list[int]:
                 )
             )
         )
-    return parse.waiting_ids(s, TRIAL if scope == "trial" else None)
+    if scope == "trial":
+        return parse.waiting_ids(s, TRIAL)
+    return parse.waiting_ids(s, int(config.number("parse_limit")) or None)
 
 
 @router.get("/parse", response_class=HTMLResponse)
 def parse_confirm(request: Request, scope: str = "trial", job: int | None = None):
     with db.SessionLocal() as s:
         ids = _scope_ids(s, scope, job)
+        waiting = len(parse.waiting_ids(s)) if scope == "all" else len(ids)
         est = parse.estimate(s, ids)
         demo = config.is_demo()
         showcase = present.showcase(s) if demo else None
@@ -406,6 +411,7 @@ def parse_confirm(request: Request, scope: str = "trial", job: int | None = None
         scope=scope,
         job_id=job,
         est=est,
+        waiting=waiting,
         demo=demo,
         demo_miss=showcase,
         duration=present.duration(est["seconds_low"], est["seconds_high"], True),
@@ -420,10 +426,14 @@ async def parse_start(request: Request):
     job_id = int(form["job"]) if form.get("job") else None
     with db.SessionLocal() as s:
         ids = _scope_ids(s, scope, job_id)
+        waiting = len(parse.waiting_ids(s))
         if ids:
             job = parse.start_parse(s, ids)
-            if scope == "trial" and job.payload["ids"] == ids:  # новая задача, не дописка
-                job.payload = {**job.payload, "trial": True}
+            if job.payload["ids"] == ids:  # новая задача, не дописка
+                if scope == "trial":
+                    job.payload = {**job.payload, "trial": True}
+                elif scope == "all" and waiting > len(ids):  # упёрлись в лимит за запуск
+                    job.payload = {**job.payload, "waiting": waiting}
                 s.commit()
     return RedirectResponse("/", status_code=303)
 
@@ -695,6 +705,7 @@ SETTING_FIELDS = [
     "price_eval_in",
     "price_eval_out",
     "usd_rub",
+    "parse_limit",
     "embed_model",
     "night_time",
     "night_days",
@@ -740,15 +751,37 @@ def _memory() -> list:
         ).all()
 
 
+def _clear_label() -> str:
+    """Подпись кнопки очистки: в демо — что именно удалится. Демо — одна загрузка и одна
+    вакансия; есть ещё (рекрутер добавил своё в демо-базу, например в 0.2) — удалится
+    и своё, поэтому подпись не называет всё вымышленным."""
+    if not config.has_demo_data():
+        return "Очистить базу"
+    with db.SessionLocal() as s:
+        n = s.scalar(select(func.count(Candidate.id)).where(active()))
+        batches = s.scalar(select(func.count(ImportBatch.id)))
+        vacancies = s.scalar(select(func.count(Vacancy.id)))
+    people = present.count(n, "кандидат", "кандидата", "кандидатов")
+    if batches > 1 or vacancies > 1:
+        return f"Удалить все данные: {people}, среди них вымышленные из демо"
+    return f"Удалить вымышленные данные ({people} и демо-вакансия)"
+
+
 def _settings_page(
-    request: Request, message: str | None = None, error: bool = False, typed: dict | None = None
+    request: Request,
+    message: str | None = None,
+    error: bool = False,
+    typed: dict | None = None,
+    confirm_clear: bool = False,
 ):
     """`typed` — несохранённые значения из формы: после проверки подключения они остаются
-    в полях, а не заменяются сохранёнными."""
+    в полях, а не заменяются сохранёнными. `confirm_clear` — второй шаг очистки базы."""
     values = {key: (typed or {}).get(key) or config.get(key) for key in SETTING_FIELDS}
     return render(
         request,
         "settings.html",
+        clear_label=_clear_label(),
+        confirm_clear=confirm_clear,
         values=values,
         has_key=bool(config.get("llm_api_key")),
         has_password=bool(config.get("smtp_password")),
@@ -782,6 +815,21 @@ async def settings_save(request: Request):
     return _settings_page(request, "Сохранено.")
 
 
+MAX_LIMIT = 1_000_000
+LIMIT_ERROR = "Лимит разбора — целое число от 0 до 1 000 000, например 200; 0 — без лимита."
+
+
+def _parse_limit(text: str) -> str | None:
+    """Лимит разбора из формы: пусто — по умолчанию, не число или больше миллиона — None."""
+    if not text:
+        return config.DEFAULTS["parse_limit"]
+    try:
+        limit = int(text)
+    except ValueError:  # «²», «двести», «1.5»
+        return None
+    return str(limit) if 0 <= limit <= MAX_LIMIT else None
+
+
 def _save_settings(form) -> str | None:
     """Сохраняет присланные поля «Настроек»; ошибка ввода — текст, ничего не сохранено."""
     values = {key: str(form.get(key, "")).strip() for key in SETTING_FIELDS if key in form}
@@ -792,6 +840,11 @@ def _save_settings(form) -> str | None:
         return "Время укажите как 02:00."
     if values.get("night_days", "daily") not in schedule.DAYS:
         values.pop("night_days")
+    if "parse_limit" in values:
+        limit = _parse_limit(values["parse_limit"])
+        if limit is None:
+            return LIMIT_ERROR
+        values["parse_limit"] = limit
     if values.get("smtp_port") and not values["smtp_port"].isdigit():
         return "Порт почтового сервера — число, например 587."
     model_changed = values.get("embed_model") not in (None, config.get("embed_model"))
@@ -846,9 +899,26 @@ async def settings_check(request: Request):
     return _settings_page(request, message, typed=typed)
 
 
+FOREIGN = "Запрос пришёл не из программы."
+
+
+def foreign(request: Request) -> PlainTextResponse | None:
+    """Необратимые кнопки («Удалить ключ», очистка базы) — только со своих страниц: чужой
+    сайт в том же браузере мог бы прислать форму на 127.0.0.1. Браузер помечает такой
+    запрос заголовками Sec-Fetch-Site и Origin; без них (curl, тесты) запрос свой."""
+    site = request.headers.get("sec-fetch-site")
+    origin = request.headers.get("origin")
+    ours = f"{request.url.scheme}://{request.headers.get('host', '')}"
+    if site not in (None, "same-origin", "none") or origin not in (None, ours):
+        return PlainTextResponse(FOREIGN, status_code=403)
+    return None
+
+
 @router.post("/settings/key-delete", response_class=HTMLResponse)
 def settings_key_delete(request: Request):
     """«Удалить ключ»: пустое поле ключ не стирает, поэтому отдельная кнопка."""
+    if refused := foreign(request):
+        return refused
     config.save({"llm_api_key": ""})
     if config.has_recorded():  # демо: без ключа — обратно на записанные ответы
         config.save({"llm_provider": "mock"})
@@ -868,6 +938,19 @@ async def settings_mail_test(request: Request):
     if error:
         return _settings_page(request, error, error=True)
     return _settings_page(request, f"Пробное письмо ушло на {config.get('smtp_to')}.")
+
+
+@router.post("/settings/clear", response_class=HTMLResponse)
+async def settings_clear(request: Request):
+    """Очистка базы в два шага: первый показывает подтверждение, второй («Да, удалить»,
+    поле confirm) удаляет данные. Настройки и ключ остаются."""
+    if refused := foreign(request):
+        return refused
+    form = await request.form()
+    if form.get("confirm") != "1":
+        return _settings_page(request, confirm_clear=True)
+    wipe.clear_base()
+    return RedirectResponse("/", status_code=303)
 
 
 @router.post("/feedback/clear")

@@ -1,9 +1,10 @@
 {% extends "base.html" %}
 {% block content %}
-{% if demo %}<p class="callout small">Демо-режим: данные вымышленные. {{ DEMO_MISS }}.</p>{% endif %}
+{% if demo %}<p class="callout small">Демо-режим: данные вымышленные. {{ DEMO_MISS }}.</p>
+{% elif need_key %}<p class="callout small">Чтобы разбирать свои резюме, вставьте ключ в <a href="/settings">«Настройках»</a>.</p>{% endif %}
 <h1>Главная</h1>
 {% if not stats.records and not running %}
-<p class="sub">База пока пустая. Начните с неё: агент прочитает выгрузку из CRM и файлы резюме.</p>
+<p class="sub">База пуста. Загрузите выгрузку из CRM — <a href="/upload">«Загрузить»</a>.</p>
 <div class="card offer">
   <h4>Шаг 1. Загрузить базу</h4>
   <p>Выгрузка из CRM (CSV или Excel), файлы резюме или целая папка. Агент сам поймёт колонки и покажет, что получится, до загрузки.</p>

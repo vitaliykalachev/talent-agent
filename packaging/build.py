@@ -60,7 +60,11 @@ TARGETS = {
         "python/lib/python3.12/site-packages",
         "python/bin",
         "kadrovyi-agent-mac.zip",
-        {"launcher.command": "Запустить.command", "readme-client-mac.txt": "Как запустить.txt"},
+        {
+            "launcher.command": "Запустить.command",
+            "readme-client-mac.txt": "Как запустить.txt",
+            "readme-own-data.txt": "Свои данные.txt",
+        },
     ),
 }
 VSWHERE = (
