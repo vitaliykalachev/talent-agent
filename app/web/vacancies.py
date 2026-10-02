@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from sqlalchemy import case, func, select
 
-from app import db, export
+from app import db, embed, export
 from app import evaluate as ev
 from app.llm import DEMO_MISS, LLMError
 from app.models import Candidate, Feedback, Job, Match, Vacancy
@@ -186,7 +186,12 @@ def vacancy(request: Request, vacancy_id: int):
         if job and job.payload.get("vacancy_id") != v.id:
             job = None
         offers = []
-        if v.requirements and ev.scored(v):
+        scored = bool(v.requirements and ev.scored(v))
+        # Отпечатки есть, а модель поиска ещё грузится (первые минуты после запуска): поиск
+        # кандидатов ждал бы её, поэтому карточка открывается сразу, а кнопки оценки с ценой
+        # появятся, когда модель загрузится
+        warming = scored and len(embed.index()[0]) > 0 and not embed.ready()
+        if scored and not warming:
             order = ev.pool(s, v)
             for limit in (ev.TRIAL, v.top_n):
                 est = ev.estimate(s, v, limit, order)
@@ -211,6 +216,7 @@ def vacancy(request: Request, vacancy_id: int):
         v=v,
         job=job,
         offers=offers,
+        warming=warming,
         evaluated=evaluated,
         memory=memory,
         names=names,

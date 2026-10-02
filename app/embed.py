@@ -30,7 +30,10 @@ FALLBACK_PREFIXES = {"query": "query: ", "passage": "passage: "}
 BATCH = 64
 RAW_CHARS = 1500  # ≈ 512 токенов окна модели — для резюме, которые не удалось разобрать
 
-_lock = threading.Lock()
+_lock = threading.Lock()  # матрица _index
+# Веса грузятся под своим замком: при первом запуске после установки это минуты, и всё это
+# время матрица и ready() отвечают сразу, а не ждут загрузку
+_loading = threading.Lock()
 # На Mac torch считает на MPS, а он не выдерживает двух encode из разных потоков сразу
 # (Segmentation fault в MetalShaderLibrary): поиск и фоновые задачи строят векторы по очереди
 _encoding = threading.Lock()
@@ -47,7 +50,7 @@ def models_dir() -> Path:
 
 
 def _model(name: str):
-    with _lock:
+    with _loading:
         if name not in _models:
             from sentence_transformers import SentenceTransformer
 
@@ -59,6 +62,12 @@ def _model(name: str):
             except OSError:
                 _models[name] = SentenceTransformer(name, cache_folder=folder)
         return _models[name]
+
+
+def ready() -> bool:
+    """Модель поиска уже в памяти: запрос по смыслу не будет ждать загрузку весов.
+    Без замка — его держит сама загрузка."""
+    return model_name() in _models
 
 
 def encode(texts: list[str], kind: str) -> np.ndarray:

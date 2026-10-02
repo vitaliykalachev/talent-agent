@@ -80,7 +80,9 @@ class Filters:
 
 @dataclass
 class Result:
-    mode: str  # meaning | contacts | list | words (до разбора, отпечатков ещё нет)
+    # meaning | contacts | list | words (до разбора, отпечатков ещё нет) |
+    # warming (модель поиска ещё грузится после запуска — по словам, BM25)
+    mode: str
     hits: list = field(default_factory=list)  # (Candidate, близость | None, фрагмент | None)
     total: int = 0
     removed: dict[str, int] = field(default_factory=dict)
@@ -338,7 +340,9 @@ def search(session: Session, query: str, filters: Filters, sort: str = "meaning"
         ]
         items = list(session.scalars(select(Candidate).where(active(), *conds).limit(PAGE_SIZE)))
         return Result("words", [(c, None, None) for c in items], len(items), base=base)
-    pool, scores, by_words = _ranked(session, query)
+    # Модель ещё грузится (первые минуты после запуска): ищем по словам, а не ждём её
+    mode = "meaning" if embed.ready() else "warming"
+    pool, scores, by_words = _ranked(session, query, "hybrid" if mode == "meaning" else "bm25")
     # Ниже порога близости и без единого слова запроса — не «возможно», а мимо.
     pool = [i for i in pool if i in by_words or scores.get(i, 0.0) >= CLOSE]
     passing = {
@@ -353,4 +357,4 @@ def search(session: Session, query: str, filters: Filters, sort: str = "meaning"
     removed, relax = _filter_stats(session, filters, pool, len(ordered))
     page_items = ordered[(page - 1) * PAGE_SIZE : page * PAGE_SIZE]
     hits = [(c, closeness(scores.get(c.id, 0.0)), fragment(c, query)) for c in page_items]
-    return Result("meaning", hits, len(ordered), removed, relax, searched=len(ids), base=base)
+    return Result(mode, hits, len(ordered), removed, relax, searched=len(ids), base=base)
