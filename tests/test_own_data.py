@@ -155,6 +155,15 @@ def test_search_and_upload_work_after_clear(web, session, do_import, tmp_path):
     assert len(rows) == 6 and all("Отливки из чугуна" in c.raw_text for c in rows)
 
 
+def test_search_before_parse_matches_words_not_phrase(web, do_import, tmp_path):
+    """Живой прогон 0.4: до разбора (отпечатков нет) запрос из нескольких слов искался
+    одной фразой и не находил никого, хотя каждое слово в резюме есть."""
+    do_import(resume_xlsx(tmp_path / "crm.xlsx"))
+    text = web.get("/candidates", params={"q": "контроль брака, отливки из стали"}).text
+    assert "Агент ищет по словам" in text and "Никого не нашли" not in text
+    assert text.count('<tr class="hit') == 6
+
+
 def test_running_job_survives_clear(session, do_import, monkeypatch):
     """Разбор шёл, когда базу очистили: воркер не падает, задач и записей не остаётся."""
     config.save({"llm_provider": "mock", "llm_fixtures": str(FIXTURES)})

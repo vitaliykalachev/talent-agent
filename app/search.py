@@ -328,20 +328,12 @@ def search(session: Session, query: str, filters: Filters, sort: str = "meaning"
             return Result("contacts", [(c, None, None) for c in found], len(found), base=base)
 
     ids, _ = embed.index()
-    if not len(ids):  # отпечатков ещё нет — ищем по словам, как до разбора
-        needle = query.strip().lower()
-        conds = [
-            *filters.conditions(),
-            or_(
-                func.pylower(Candidate.full_name).contains(needle, autoescape=True),
-                func.pylower(Candidate.raw_text).contains(needle, autoescape=True),
-                func.pylower(Candidate.city).contains(needle, autoescape=True),
-            ),
-        ]
-        items = list(session.scalars(select(Candidate).where(active(), *conds).limit(PAGE_SIZE)))
-        return Result("words", [(c, None, None) for c in items], len(items), base=base)
-    # Модель ещё грузится (первые минуты после запуска): ищем по словам, а не ждём её
-    mode = "meaning" if embed.ready() else "warming"
+    # Отпечатков ещё нет (до разбора) или модель ещё грузится после запуска — ищем по
+    # словам (BM25): каждое слово запроса отдельно, а не всю строку одной фразой
+    if not len(ids):
+        mode = "words"
+    else:
+        mode = "meaning" if embed.ready() else "warming"
     pool, scores, by_words = _ranked(session, query, "hybrid" if mode == "meaning" else "bm25")
     # Ниже порога близости и без единого слова запроса — не «возможно», а мимо.
     pool = [i for i in pool if i in by_words or scores.get(i, 0.0) >= CLOSE]
