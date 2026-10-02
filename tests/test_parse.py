@@ -212,7 +212,7 @@ def test_bad_key_stops_job_with_human_message(five, session, tmp_path):
     config.save({"llm_fixtures": str(tmp_path)})
     job = parse_all(session)
     assert job.status == "failed"
-    assert job.error == "Ключ доступа не подошёл. Проверьте, что скопировали его целиком."
+    assert job.error == "Ключ не принят: проверьте, что он скопирован целиком."
 
 
 def test_empty_balance_stops_job_with_human_message(five, session, tmp_path):

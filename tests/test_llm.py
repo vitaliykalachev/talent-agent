@@ -140,7 +140,7 @@ def test_cached_input_counted_in_volume(monkeypatch):
 
 def test_bad_key_gives_human_message(tmp_path):
     model = mock(tmp_path, response={"__error__": "auth"})
-    with pytest.raises(AuthError, match="Ключ доступа не подошёл"):
+    with pytest.raises(AuthError, match="Ключ не принят"):
         model.complete_structured(Answer, "s", "технолог")
 
 
