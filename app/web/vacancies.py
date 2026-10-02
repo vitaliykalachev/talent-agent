@@ -193,8 +193,14 @@ def vacancy(request: Request, vacancy_id: int):
         scored = bool(v.requirements and ev.scored(v))
         # Отпечатки есть, а модель поиска ещё грузится (первые минуты после запуска): поиск
         # кандидатов ждал бы её, поэтому карточка открывается сразу, а кнопки оценки с ценой
-        # появятся, когда модель загрузится
+        # появятся, когда модель загрузится. Упала загрузка дважды — честная строка, а
+        # кандидатов для оценки агент подбирает по словам.
         warming = scored and len(embed.index()[0]) > 0 and not embed.ready()
+        broken = ""
+        if warming:
+            embed.ensure()
+            broken = embed.broken()
+            warming = not broken
         if scored and not warming:
             order = ev.pool(s, v)
             for limit in (ev.TRIAL, v.top_n):
@@ -221,6 +227,7 @@ def vacancy(request: Request, vacancy_id: int):
         job=job,
         offers=offers,
         warming=warming,
+        broken=broken,
         evaluated=evaluated,
         memory=memory,
         names=names,

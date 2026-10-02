@@ -84,6 +84,7 @@
 </details>
 
 <section class="card confirm" id="run">
+  {% if broken %}<p>{{ broken }}.</p>{% endif %}
   {% if job and job.status != "done" %}
   {% include "eval_job.html" %}
   {% elif warming %}

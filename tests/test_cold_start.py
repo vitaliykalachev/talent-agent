@@ -43,6 +43,40 @@ def slow_model(monkeypatch):
     gate.set()
 
 
+@pytest.fixture
+def flaky_model(monkeypatch):
+    """Модель поиска не грузится, пока `state["down"]`: так бывает без весов и без сети.
+    Повторная загрузка с экранов — без паузы в 30 с."""
+    state = {"down": True}
+
+    class Model:
+        prompts = {"query": "search_query: ", "passage": "search_document: "}
+
+        def __init__(self, *_args, **_kwargs):
+            if state["down"]:
+                raise OSError("We couldn't connect to 'https://huggingface.co' to load files")
+
+        def encode(self, texts, **_kwargs):
+            return np.full((len(texts), DIM), 0.5, dtype=np.float32)
+
+    fake = types.SimpleNamespace(SentenceTransformer=Model)
+    monkeypatch.setitem(sys.modules, "sentence_transformers", fake)
+    monkeypatch.setattr(embed, "_models", {})
+    monkeypatch.setattr(embed, "_failed", {"count": 0, "at": 0.0, "reason": ""})
+    monkeypatch.setattr(embed, "RETRY_AFTER", 0)
+    yield state
+    for thread in threading.enumerate():  # фоновая загрузка не переживёт подмену
+        if thread.name == embed.RETRY_THREAD:
+            thread.join(5)
+
+
+def failures(n: int) -> bool:
+    deadline = time.monotonic() + 5
+    while embed._failed["count"] < n and time.monotonic() < deadline:
+        time.sleep(0.02)
+    return embed._failed["count"] >= n
+
+
 def with_vectors(session) -> None:
     """Отпечатки у всех кандидатов: без модели по смыслу больше не искать."""
     for cid in session.scalars(select(Candidate.id)):
@@ -107,3 +141,57 @@ def test_search_answers_by_words_while_model_loads(session, base, slow_model, tm
         assert loaded()
         text, _ = timed(web, "/candidates", params=query)
         assert LOADING not in text and "Агент ищет по смыслу" in text
+
+
+def test_failed_load_retried_from_card(session, base, mock, flaky_model, tmp_path, caplog):  # noqa: F811
+    """Ревью PR #3: загрузка модели при старте упала (нет весов, нет сети), причина — в
+    журнале. Карточка сначала пишет, что поиск по смыслу загружается, и сама запускает
+    загрузку заново; вторая попытка удалась — на карточке кнопки оценки."""
+    v, p = base
+    mock(standard(v, p))
+    run(session, v)
+    with_vectors(session)
+    with TestClient(create_app(tmp_path / "data")) as web:
+        assert failures(1)  # при старте
+        flaky_model["down"] = False  # сеть появилась
+        card, _ = timed(web, f"/vacancies/{v.id}")
+        assert LOADING in card
+        assert loaded()
+        card, _ = timed(web, f"/vacancies/{v.id}")
+        assert LOADING not in card and "Все найденные кандидаты уже оценены" in card
+    assert "Модель поиска не загрузилась" in caplog.text
+
+
+def test_twice_failed_load_named_honestly(
+    session,
+    base,  # noqa: F811
+    mock,  # noqa: F811
+    flaky_model,
+    tmp_path,
+    monkeypatch,
+):
+    """Вторая попытка тоже упала: карточка и поиск честно пишут, что поиск по смыслу не
+    загрузился, без английского текста исключения; подбор кандидатов для оценки и поиск
+    идут по словам и модель не ждут."""
+    v, p = base
+    mock(standard(v, p))
+    run(session, v)
+    with_vectors(session)
+    query = {"q": "литьё под давлением, бережливое производство"}
+    with TestClient(create_app(tmp_path / "data")) as web:
+        assert failures(1)
+        web.get(f"/vacancies/{v.id}")  # карточка запускает вторую попытку
+        assert failures(2)
+        monkeypatch.setattr(embed, "RETRY_AFTER", 3600)  # дальше без новых попыток
+        card, card_s = timed(web, f"/vacancies/{v.id}")
+        found, found_s = timed(web, "/candidates", params=query)
+    honest = (
+        "Поиск по смыслу не загрузился: файлы модели не скачались, "
+        "разбор и оценка работают, поиск — по словам"
+    )
+    assert card_s < 2 and found_s < 2
+    assert honest in card and LOADING not in card
+    assert "Все найденные кандидаты уже оценены" in card  # подбор по словам, без модели
+    assert honest in found and "Громов Илья Сергеевич" in found
+    for text in (card, found):
+        assert "huggingface" not in text and "OSError" not in text

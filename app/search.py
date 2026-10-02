@@ -89,6 +89,7 @@ class Result:
     relax: tuple[str, int] | None = None  # какое условие снять, чтобы кто-то нашёлся
     searched: int = 0  # среди скольких с отпечатком искали
     base: int = 0  # сколько всего кандидатов
+    broken: str = ""  # загрузка модели упала дважды — честная строка вместо «загружается»
 
 
 def closeness(score: float) -> str:
@@ -164,7 +165,7 @@ def _ranked(session: Session, query: str, mode: str = "hybrid"):
     ids, matrix = embed.index()
     closeness_by_id: dict[int, float] = {}
     by_vector: list[int] = []
-    if len(ids) and mode in ("hybrid", "vector"):
+    if len(ids) and mode in ("hybrid", "vector") and embed.usable():
         scores = matrix @ embed.encode([query], "query")[0]
         top = np.argsort(-scores)[:POOL]
         by_vector = [int(ids[i]) for i in top]
@@ -334,6 +335,8 @@ def search(session: Session, query: str, filters: Filters, sort: str = "meaning"
         mode = "words"
     else:
         mode = "meaning" if embed.ready() else "warming"
+    if mode == "warming":
+        embed.ensure()  # загрузка упала — запускаем снова в фоне
     pool, scores, by_words = _ranked(session, query, "hybrid" if mode == "meaning" else "bm25")
     # Ниже порога близости и без единого слова запроса — не «возможно», а мимо.
     pool = [i for i in pool if i in by_words or scores.get(i, 0.0) >= CLOSE]
@@ -349,4 +352,13 @@ def search(session: Session, query: str, filters: Filters, sort: str = "meaning"
     removed, relax = _filter_stats(session, filters, pool, len(ordered))
     page_items = ordered[(page - 1) * PAGE_SIZE : page * PAGE_SIZE]
     hits = [(c, closeness(scores.get(c.id, 0.0)), fragment(c, query)) for c in page_items]
-    return Result(mode, hits, len(ordered), removed, relax, searched=len(ids), base=base)
+    return Result(
+        mode,
+        hits,
+        len(ordered),
+        removed,
+        relax,
+        searched=len(ids),
+        base=base,
+        broken=embed.broken() if mode == "warming" else "",
+    )

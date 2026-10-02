@@ -9,8 +9,10 @@
 мегабайт максимум), при добавлении обновляется; поиск — полный перебор.
 """
 
+import logging
 import os
 import threading
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -29,11 +31,17 @@ from app.models import Candidate, Embedding, Job
 FALLBACK_PREFIXES = {"query": "query: ", "passage": "passage: "}
 BATCH = 64
 RAW_CHARS = 1500  # ≈ 512 токенов окна модели — для резюме, которые не удалось разобрать
+RETRY_AFTER = 30  # секунд: упавшую загрузку модели экраны запускают снова не чаще
+RETRY_THREAD = "загрузка модели поиска"
 
+log = logging.getLogger(__name__)
 _lock = threading.Lock()  # матрица _index
 # Веса грузятся под своим замком: при первом запуске после установки это минуты, и всё это
 # время матрица и ready() отвечают сразу, а не ждут загрузку
 _loading = threading.Lock()
+_retry = threading.Lock()  # две вкладки не запускают две повторные загрузки
+# Сколько загрузок подряд упало (нет весов, нет сети), когда и почему — для экранов
+_failed: dict = {"count": 0, "at": 0.0, "reason": ""}
 # На Mac torch считает на MPS, а он не выдерживает двух encode из разных потоков сразу
 # (Segmentation fault в MetalShaderLibrary): поиск и фоновые задачи строят векторы по очереди
 _encoding = threading.Lock()
@@ -52,22 +60,72 @@ def models_dir() -> Path:
 def _model(name: str):
     with _loading:
         if name not in _models:
-            from sentence_transformers import SentenceTransformer
-
             folder = str(models_dir())
-            try:  # вес уже скачан — без обращений к Hugging Face (−10 с на старте)
-                _models[name] = SentenceTransformer(
-                    name, cache_folder=folder, local_files_only=True
-                )
-            except OSError:
-                _models[name] = SentenceTransformer(name, cache_folder=folder)
+            try:
+                from sentence_transformers import SentenceTransformer
+
+                try:  # вес уже скачан — без обращений к Hugging Face (−10 с на старте)
+                    _models[name] = SentenceTransformer(
+                        name, cache_folder=folder, local_files_only=True
+                    )
+                except OSError:
+                    _models[name] = SentenceTransformer(name, cache_folder=folder)
+            except Exception as exc:
+                _failed.update(count=_failed["count"] + 1, at=time.monotonic(), reason=_why(exc))
+                raise
+            _failed.update(count=0, reason="")
         return _models[name]
+
+
+def _why(exc: Exception) -> str:
+    """Причина сбоя загрузки коротко и по-русски: текст исключения длинный и английский."""
+    if isinstance(exc, MemoryError):
+        return "не хватило памяти"
+    if isinstance(exc, OSError):  # весов нет на диске, а Hugging Face недоступен
+        return "файлы модели не скачались"
+    return "модель не запустилась на этом компьютере"
 
 
 def ready() -> bool:
     """Модель поиска уже в памяти: запрос по смыслу не будет ждать загрузку весов.
     Без замка — его держит сама загрузка."""
     return model_name() in _models
+
+
+def usable() -> bool:
+    """Подбору по смыслу есть смысл ждать модель: она в памяти или её загрузка ещё не
+    падала. После сбоя поиск и подбор кандидатов для оценки идут по словам, пока
+    повторная загрузка не удастся."""
+    return ready() or not _failed["count"]
+
+
+def broken() -> str:
+    """Загрузка упала дважды подряд: честная строка для экранов, иначе пусто."""
+    if _failed["count"] < 2 or ready():
+        return ""
+    return (
+        f"Поиск по смыслу не загрузился: {_failed['reason']}, "
+        "разбор и оценка работают, поиск — по словам"
+    )
+
+
+def _try_load() -> None:
+    try:
+        _model(model_name())
+    except Exception:
+        log.exception("Модель поиска не загрузилась")
+
+
+def ensure() -> None:
+    """Экран, которому нужна модель: её нет в памяти, она не грузится, а прошлая загрузка
+    упала — запускаем загрузку в фоне заново, не чаще раза в RETRY_AFTER секунд."""
+    with _retry:
+        if ready() or _loading.locked() or not _failed["count"]:
+            return
+        if time.monotonic() - _failed["at"] < RETRY_AFTER:
+            return
+        _failed["at"] = time.monotonic()
+        threading.Thread(target=_try_load, name=RETRY_THREAD, daemon=True).start()
 
 
 def encode(texts: list[str], kind: str) -> np.ndarray:
@@ -144,10 +202,11 @@ def _add(ids: list[int], vectors: np.ndarray) -> None:
 
 
 def warm_up() -> None:
-    """При старте: матрица и модель, если в базе уже есть векторы."""
+    """При старте: матрица и модель, если в базе уже есть векторы. Сбой загрузки — в
+    журнал; экраны запустят её снова (ensure)."""
     ids, _ = index()
     if len(ids):
-        _model(model_name())
+        _try_load()
 
 
 def run_embed(job_id: int) -> None:
