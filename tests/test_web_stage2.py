@@ -147,6 +147,24 @@ def test_stopped_parse_shown_with_retry(web, five, session, tmp_path):  # noqa: 
     assert "Разбор остановлен" not in page(web, "/")
 
 
+def test_crash_shown_in_plain_words_details_in_log(web, five, session, monkeypatch, caplog):  # noqa: F811
+    """Ревью PR #3: сбой кода посреди разбора — на экране общая фраза, а не
+    «AttributeError: …»; подробности — в журнале сервера."""
+    from app import parse
+    from app.jobs import UNEXPECTED
+
+    def broken(*_args, **_kwargs):
+        raise AttributeError("'NoneType' object has no attribute 'title'")
+
+    monkeypatch.setattr(parse, "to_parsed", broken)
+    job = parse_all(session)
+    assert job.status == "failed" and job.error == UNEXPECTED
+    home = page(web, "/")
+    assert "Разбор остановлен" in home and UNEXPECTED in home
+    assert "AttributeError" not in home and "NoneType" not in home
+    assert "AttributeError: 'NoneType' object has no attribute 'title'" in caplog.text
+
+
 def test_retry_refuses_other_sites(web, five, session, tmp_path):  # noqa: F811
     """Ревью PR #3: «Повторить» тратит деньги — чужой сайт в том же браузере не может
     прислать эту форму, как и очистку базы."""

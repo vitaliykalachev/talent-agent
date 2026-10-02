@@ -289,15 +289,20 @@ def test_night_marks_stale_embeds_new_and_evaluates_only_new(session, night_base
     )
 
 
-def test_failed_night_run_shows_reason_first(session, monkeypatch):
+def test_failed_night_run_shows_reason_first(session, monkeypatch, caplog):
+    """Сбой ночного прогона — первой строкой «Утра». Текст исключения на экран не идёт
+    (ревью PR #3): там общая фраза, подробности — в журнале сервера."""
+    from app.jobs import UNEXPECTED
+
     def boom(_session):
-        raise RuntimeError("база занята")
+        raise RuntimeError("database is locked")
 
     monkeypatch.setattr(night, "_mark_stale", boom)
     night.enqueue()
     run_pending()
     view = morning.view(session)
-    assert view["alert"] == "Ночной прогон не получился: база занята" and view["run_now"]
+    assert view["alert"] == f"Ночной прогон не получился. {UNEXPECTED}" and view["run_now"]
+    assert "database is locked" in caplog.text
 
 
 class FakeSMTP:
