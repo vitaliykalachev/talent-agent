@@ -85,9 +85,12 @@
 
 <section class="card confirm" id="run">
   {% if broken %}<p>{{ broken }}.</p>{% endif %}
-  {% if job and job.status != "done" %}
+  {% if job and job.status in ("queued", "running", "paused") %}
   {% include "eval_job.html" %}
-  {% elif warming %}
+  {% else %}
+  {# остановленная оценка: «Повторить» и рядом обычные кнопки — при постоянном сбое есть выбор #}
+  {% if job and job.status == "failed" %}{% include "eval_job.html" %}{% endif %}
+  {% if warming %}
   {# раздел сам обновляется раз в 10 секунд и покажет кнопки оценки, когда модель загрузится #}
   <p hx-get="/vacancies/{{ v.id }}" hx-trigger="every 10s" hx-select="#run" hx-target="#run" hx-swap="outerHTML">Поиск по смыслу ещё загружается, через минуту обновите страницу.</p>
   {% elif not offers %}
@@ -108,6 +111,7 @@
     {% endif %}
     {% endfor %}
   </div>
+  {% endif %}
   {% endif %}
 </section>
 

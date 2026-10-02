@@ -165,6 +165,9 @@ def test_402_mid_evaluation_stops_with_reason_and_retry_continues(
     listing = page(web, "/vacancies")
     assert "Оценка остановлена" in listing and BALANCE_MESSAGE in listing
     assert f'action="/jobs/{job.id}/retry"' in listing
+    # при постоянном сбое клиент не застревает с одним «Повторить»: есть и «Оценить»
+    card = page(web, f"/vacancies/{v.id}")
+    assert f'action="/vacancies/{v.id}/evaluate"' in card and "Оценить 5 для проверки" in card
 
     mock(standard(v, p))  # баланс пополнили
     sent = len(mock.calls)
