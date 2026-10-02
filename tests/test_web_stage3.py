@@ -110,6 +110,18 @@ def test_short_description_is_asked_again(web, session):
     assert r.status_code == 400 and "хотя бы парой предложений" in r.text
 
 
+def test_empty_balance_on_new_vacancy_named_without_try_again(web, session, mock):  # noqa: F811
+    """Живой прогон 0.4: на ключе кончились деньги. Форма вакансии говорит, что делать,
+    а не «Попробуйте ещё раз» — повтор не поможет — и без «..» на стыке фраз."""
+    from app.llm import BALANCE_MESSAGE
+
+    mock([{"match": "", "schema": "VacancyDraft", "response": {"__error__": 402}}])
+    r = web.post("/vacancies/new", data={"description": "Нужен начальник литейного цеха от 5 лет."})
+    assert f"Не получилось разобрать описание. {BALANCE_MESSAGE}" in r.text
+    assert "Попробуйте ещё раз" not in r.text and ".." not in r.text
+    assert session.scalar(select(Vacancy)) is None
+
+
 def test_results_groups_card_and_resume_link(web, session, base, mock):  # noqa: F811
     v, p = base
     mock(standard(v, p))

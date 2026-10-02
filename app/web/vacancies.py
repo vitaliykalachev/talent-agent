@@ -11,7 +11,7 @@ from sqlalchemy import case, func, select
 
 from app import db, embed, export
 from app import evaluate as ev
-from app.llm import DEMO_MISS, LLMError
+from app.llm import DEMO_MISS, AuthError, LLMError
 from app.models import Candidate, Feedback, Job, Match, Vacancy
 from app.web import present
 from app.web.routes import render, templates
@@ -169,6 +169,8 @@ async def vacancy_create(request: Request):
             if str(exc) == DEMO_MISS:  # демо без ключа: не сбой, а подсказка, что посмотреть
                 return render(request, "vacancy_new.html", form=form, demo_miss=present.showcase(s))
             error = f"Не получилось разобрать описание: {exc}. Попробуйте ещё раз."
+            if isinstance(exc, AuthError):  # ключ или баланс: повтор не поможет, совет — в тексте
+                error = f"Не получилось разобрать описание. {exc}"
             return _new_form_error(request, form, error, 502)
     return _go(request, f"/vacancies/{v.id}")
 

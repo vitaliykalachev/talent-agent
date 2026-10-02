@@ -107,6 +107,19 @@ def test_unreachable_service_named_plainly(web, monkeypatch):
         assert "protocol" not in text
 
 
+def test_empty_balance_named_in_check(web, tmp_path):
+    """Живой прогон 0.4: на ключе кончились деньги — «Проверить подключение» говорит
+    об этом, а не про адрес, который будто бы не отвечает."""
+    from app.llm import BALANCE_MESSAGE
+
+    (tmp_path / "balance.json").write_text(
+        json.dumps({"match": "", "response": {"__error__": 402}})
+    )
+    config.save({"llm_fixtures": str(tmp_path)})
+    text = web.post("/settings/check").text
+    assert BALANCE_MESSAGE in text and "Адрес сервиса не отвечает" not in text
+
+
 def test_link_to_resume_line_opens_resume_tab_on_phone(client):
     """Без JS: вкладка «Резюме» открывается по якорю (:target), обратно — ссылкой."""
     css = client.get("/static/app.css").text

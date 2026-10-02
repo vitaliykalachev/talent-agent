@@ -215,6 +215,17 @@ def test_bad_key_stops_job_with_human_message(five, session, tmp_path):
     assert job.error == "Ключ доступа не подошёл. Проверьте, что скопировали его целиком."
 
 
+def test_empty_balance_stops_job_with_human_message(five, session, tmp_path):
+    """На ключе кончились деньги (402): разбор останавливается на первом отказе с
+    понятной причиной, а не помечает каждое резюме «проверьте модель и адрес»."""
+    (tmp_path / "balance.json").write_text(
+        json.dumps({"match": "", "response": {"__error__": 402}})
+    )
+    config.save({"llm_fixtures": str(tmp_path)})
+    job = parse_all(session)
+    assert job.status == "failed" and job.error == llm.BALANCE_MESSAGE
+
+
 def test_resume_without_recorded_answer_is_failed_not_empty(five, session, tmp_path):
     """Решение главной сессии: у мока нет ответа на резюме — «Не удалось разобрать»
     с причиной «ответ модели не получен» (аудит №3: без служебных слов про запись),
