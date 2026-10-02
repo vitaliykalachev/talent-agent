@@ -147,6 +147,23 @@ def test_stopped_parse_shown_with_retry(web, five, session, tmp_path):  # noqa: 
     assert "Разбор остановлен" not in page(web, "/")
 
 
+def test_retry_refuses_other_sites(web, five, session, tmp_path):  # noqa: F811
+    """Ревью PR #3: «Повторить» тратит деньги — чужой сайт в том же браузере не может
+    прислать эту форму, как и очистку базы."""
+    (tmp_path / "balance.json").write_text(
+        json.dumps({"match": "", "response": {"__error__": 402}})
+    )
+    config.save({"llm_fixtures": str(tmp_path)})
+    job = parse_all(session)
+    foreign = {"Origin": "https://evil.example", "Sec-Fetch-Site": "cross-site"}
+    r = web.post(f"/jobs/{job.id}/retry", headers=foreign)
+    assert r.status_code == 403 and "Запрос пришёл не из программы" in r.text
+    session.expire_all()
+    assert session.get(Job, job.id).status == "failed"
+    own = {"Origin": "http://testserver", "Sec-Fetch-Site": "same-origin"}
+    assert web.post(f"/jobs/{job.id}/retry", headers=own, follow_redirects=False).status_code == 303
+
+
 @pytest.fixture
 def hub():
     """Местный «хаб» на свободном порту: на запрос к модели отвечает кодом и телом из

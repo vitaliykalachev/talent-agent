@@ -423,6 +423,8 @@ def parse_confirm(request: Request, scope: str = "trial", job: int | None = None
 
 @router.post("/parse")
 async def parse_start(request: Request):
+    if refused := foreign(request):  # тратит деньги — только со страниц программы
+        return refused
     form = await request.form()
     scope = str(form.get("scope", "trial"))
     job_id = int(form["job"]) if form.get("job") else None
@@ -499,10 +501,12 @@ def job_resume(job_id: int):
 
 
 @router.post("/jobs/{job_id}/retry")
-def job_retry(job_id: int):
+def job_retry(request: Request, job_id: int):
     """«Повторить оценку» и «Повторить разбор»: задача, которую остановил ключ, баланс или
     сбой, продолжает с того места, где встала, как прерванная перезапуском. Сделанное
     заново не отправляется, оценка остаётся той же (время начала не сдвигается)."""
+    if refused := foreign(request):  # тратит деньги — только со страниц программы
+        return refused
     with db.SessionLocal() as s:
         job = s.get(Job, job_id)
         if not job:
