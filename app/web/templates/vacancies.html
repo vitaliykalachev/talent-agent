@@ -11,11 +11,14 @@
   <thead><tr><th>Вакансия</th><th>Создана</th><th class="num">Оценено</th><th></th></tr></thead>
   <tbody>
   {% for v, n, failed in rows %}
+    {% set stop = stopped.get(v.id) %}
     <tr>
       <td class="name" data-label="Вакансия"><a href="/vacancies/{{ v.id }}">{{ v.title or "Без названия" }}</a></td>
       <td data-label="Создана">{{ v.created_at|short_date }}, {{ v.created_at.strftime("%H:%M") }}</td>
-      <td data-label="Оценено" class="num">{% if n or not failed %}{{ n|count("кандидат", "кандидата", "кандидатов") }}{% endif %}{% if failed %}{% if n %}<br>{% endif %}<span class="pill stop">Не удалось оценить {{ failed|num }}</span>{% endif %}</td>
-      <td>{% if n or failed %}<a href="/vacancies/{{ v.id }}/results">Результат</a>{% endif %}</td>
+      <td data-label="Оценено" class="num">{% if n or not failed %}{{ n|count("кандидат", "кандидата", "кандидатов") }}{% endif %}{% if failed %}{% if n %}<br>{% endif %}<span class="pill stop">Не удалось оценить {{ failed|num }}</span>{% endif %}{% if stop %}<br><span class="pill stop">Оценка остановлена</span>{% endif %}</td>
+      <td>{% if n or failed %}<a href="/vacancies/{{ v.id }}/results">Результат</a>{% endif %}
+        {% if stop %}<p><small>{{ stop.error|settings_hint }}</small></p>
+        <form method="post" action="/jobs/{{ stop.id }}/retry"><button class="button ghost" type="submit">Повторить оценку</button></form>{% endif %}</td>
     </tr>
   {% endfor %}
   </tbody>

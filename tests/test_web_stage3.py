@@ -7,12 +7,12 @@ from io import BytesIO
 import pytest
 from fastapi.testclient import TestClient
 from openpyxl import load_workbook
-from sqlalchemy import select
+from sqlalchemy import func, select
 from test_evaluate import answer, base, matches, mock, run, standard  # noqa: F401 — фикстуры
 
 from app import evaluate as ev
 from app.main import create_app
-from app.models import Feedback, Job, Vacancy
+from app.models import Feedback, Job, Match, Vacancy
 
 BANNED = ("провайдер", "токен", "эмбеддинг", "парсинг", "cron", "prompt", "llm")
 
@@ -120,6 +120,54 @@ def test_empty_balance_on_new_vacancy_named_without_try_again(web, session, mock
     assert f"Не получилось разобрать описание. {BALANCE_MESSAGE}" in r.text
     assert "Попробуйте ещё раз" not in r.text and ".." not in r.text
     assert session.scalar(select(Vacancy)) is None
+
+
+def test_402_mid_evaluation_stops_with_reason_and_retry_continues(
+    web,
+    session,
+    base,  # noqa: F811
+    mock,  # noqa: F811
+    monkeypatch,
+):
+    """Долг 3: деньги на ключе кончились посреди оценки. Экраны вакансии говорят
+    «Оценка остановлена» с причиной, а не «Оценка готова»; «Повторить оценку»
+    продолжает ту же оценку и уже оценённых заново не отправляет."""
+    from app.jobs import run_pending
+    from app.llm import BALANCE_MESSAGE
+
+    v, p = base
+    monkeypatch.setattr(ev, "PARALLEL", 1)  # по одному, в порядке выдачи поиска
+    first, second, third = ev.pool(session, v)
+    people = [p[n].id for n in ("Громов", "Орлова", "Сидоров")]
+    answers = dict(zip(people, standard(v, p), strict=True))
+    broke = {**answers[second], "response": {"__error__": 402}}
+    mock([answers[first], broke, answers[third]])
+    job = run(session, v)
+    started = session.get(Vacancy, v.id).last_run_at
+    assert job.status == "failed" and job.error == BALANCE_MESSAGE
+    assert set(session.scalars(select(Match.candidate_id))) == {first}
+    for url in (f"/vacancies/{v.id}", f"/vacancies/{v.id}/results", f"/vacancies/{v.id}/job"):
+        text = page(web, url)
+        assert "Оценка остановлена" in text and BALANCE_MESSAGE in text, url
+        assert f'action="/jobs/{job.id}/retry"' in text and "Повторить оценку" in text, url
+        assert "Оценка готова" not in text, url
+    listing = page(web, "/vacancies")
+    assert "Оценка остановлена" in listing and BALANCE_MESSAGE in listing
+    assert f'action="/jobs/{job.id}/retry"' in listing
+
+    mock(standard(v, p))  # баланс пополнили
+    sent = len(mock.calls)
+    r = web.post(f"/jobs/{job.id}/retry", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == f"/vacancies/{v.id}/results"
+    run_pending()
+    session.expire_all()
+    assert session.get(Job, job.id).status == "done"
+    assert session.scalar(select(func.count(Job.id)).where(Job.kind == "evaluate")) == 1
+    assert not any(answers[first]["match"] in user for user in mock.calls[sent:])
+    assert set(session.scalars(select(Match.candidate_id))) == {first, second, third}
+    assert session.get(Vacancy, v.id).last_run_at == started  # та же оценка, а не новая
+    text = page(web, f"/vacancies/{v.id}/results")
+    assert "Оценка остановлена" not in text and "Новый" not in text
 
 
 def test_results_groups_card_and_resume_link(web, session, base, mock):  # noqa: F811

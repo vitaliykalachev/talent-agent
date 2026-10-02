@@ -85,13 +85,17 @@ def _top_n(form, default: int = 40) -> int:
     return max(int(n), 1) if n is not None else default
 
 
-def _live_job(s, v: Vacancy) -> Job | None:
-    jobs = s.scalars(
-        select(Job)
-        .where(Job.kind == "evaluate", Job.status.in_(("queued", "running", "paused")))
-        .order_by(Job.id)
+def _last_jobs(s, ids: list[int]) -> dict[int, Job]:
+    """Последняя оценка каждой вакансии: идёт, готова или остановлена (ключ, баланс, сбой)."""
+    vacancy = func.json_extract(Job.payload, "$.vacancy_id")
+    last = (
+        select(func.max(Job.id)).where(Job.kind == "evaluate", vacancy.in_(ids)).group_by(vacancy)
     )
-    return next((j for j in jobs if j.payload.get("vacancy_id") == v.id), None)
+    return {j.payload["vacancy_id"]: j for j in s.scalars(select(Job).where(Job.id.in_(last)))}
+
+
+def _last_job(s, v: Vacancy) -> Job | None:
+    return _last_jobs(s, [v.id]).get(v.id)
 
 
 # ── Список и новая вакансия ─────────────────────────────────────────────────
@@ -108,7 +112,9 @@ def vacancies(request: Request):
             .group_by(Vacancy.id)
             .order_by(Vacancy.id.desc())
         ).all()
-    return render(request, "vacancies.html", rows=rows)
+        last = _last_jobs(s, [v.id for v, _, _ in rows])
+    stopped = {vid: job for vid, job in last.items() if job.status == "failed"}
+    return render(request, "vacancies.html", rows=rows, stopped=stopped)
 
 
 @router.get("/vacancies/new", response_class=HTMLResponse)
@@ -182,11 +188,7 @@ async def vacancy_create(request: Request):
 def vacancy(request: Request, vacancy_id: int):
     with db.SessionLocal() as s:
         v = _vacancy(s, vacancy_id)
-        job = _live_job(s, v) or s.scalar(
-            select(Job).where(Job.kind == "evaluate").order_by(Job.id.desc()).limit(1)
-        )
-        if job and job.payload.get("vacancy_id") != v.id:
-            job = None
+        job = _last_job(s, v)
         offers = []
         scored = bool(v.requirements and ev.scored(v))
         # Отпечатки есть, а модель поиска ещё грузится (первые минуты после запуска): поиск
@@ -286,7 +288,7 @@ async def evaluate_start(request: Request, vacancy_id: int):
 def evaluate_progress(request: Request, vacancy_id: int):
     with db.SessionLocal() as s:
         v = _vacancy(s, vacancy_id)
-        job = _live_job(s, v)
+        job = _last_job(s, v)
     return render(request, "eval_job.html", v=v, job=job)
 
 
@@ -347,7 +349,9 @@ def results(request: Request, vacancy_id: int, hidden: int = 0, undo: int | None
     with db.SessionLocal() as s:
         v = _vacancy(s, vacancy_id)
         view = results_view(s, v, bool(hidden))
-        job = _live_job(s, v)
+        job = _last_job(s, v)
+        if job and job.status == "done":  # над готовым результатом карточки оценки нет
+            job = None
         toast = s.get(Feedback, undo) if undo else None
         recount = _recount(s, v, toast) if toast else 0
     return render(

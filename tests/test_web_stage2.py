@@ -123,6 +123,30 @@ def test_empty_balance_named_in_check(web, tmp_path):
     assert BALANCE_MESSAGE in text and "Адрес сервиса не отвечает" not in text
 
 
+def test_stopped_parse_shown_with_retry(web, five, session, tmp_path):  # noqa: F811
+    """Долг 3: разбор остановил пустой баланс. Главная и «Разбор всей базы» говорят
+    «Разбор остановлен» с причиной, «Повторить разбор» продолжает ту же задачу."""
+    from app.llm import BALANCE_MESSAGE
+
+    (tmp_path / "balance.json").write_text(
+        json.dumps({"match": "", "response": {"__error__": 402}})
+    )
+    config.save({"llm_fixtures": str(tmp_path)})
+    job = parse_all(session)
+    assert job.status == "failed"
+    for url, params in (("/", {}), ("/parse", {"scope": "all"})):
+        text = page(web, url, params=params)
+        assert "Разбор остановлен" in text and BALANCE_MESSAGE in text, url
+        assert f'action="/jobs/{job.id}/retry"' in text and "Повторить разбор" in text, url
+    config.save({"llm_fixtures": str(FIXTURES / "llm")})  # баланс пополнили
+    r = web.post(f"/jobs/{job.id}/retry", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/"
+    run_pending()
+    session.expire_all()
+    assert session.get(Job, job.id).status == "done" and waiting_ids(session) == []
+    assert "Разбор остановлен" not in page(web, "/")
+
+
 @pytest.fixture
 def hub():
     """Местный «хаб» на свободном порту: на запрос к модели отвечает кодом и телом из

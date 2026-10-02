@@ -405,9 +405,11 @@ def parse_confirm(request: Request, scope: str = "trial", job: int | None = None
         est = parse.estimate(s, ids)
         demo = config.is_demo()
         showcase = present.showcase(s) if demo else None
+        last = latest(s, "parse")
     return render(
         request,
         "parse_confirm.html",
+        stopped=last if last and last.status == "failed" else None,
         scope=scope,
         job_id=job,
         est=est,
@@ -494,6 +496,22 @@ def job_resume(job_id: int):
             job.status = "queued"
             s.commit()
     return RedirectResponse("/", status_code=303)
+
+
+@router.post("/jobs/{job_id}/retry")
+def job_retry(job_id: int):
+    """«Повторить оценку» и «Повторить разбор»: задача, которую остановил ключ, баланс или
+    сбой, продолжает с того места, где встала, как прерванная перезапуском. Сделанное
+    заново не отправляется, оценка остаётся той же (время начала не сдвигается)."""
+    with db.SessionLocal() as s:
+        job = s.get(Job, job_id)
+        if not job:
+            raise HTTPException(404)
+        if job.status == "failed":
+            job.status, job.error, job.finished_at = "running", None, None
+            s.commit()
+        vacancy = job.payload.get("vacancy_id")
+    return RedirectResponse(f"/vacancies/{vacancy}/results" if vacancy else "/", status_code=303)
 
 
 @router.get("/jobs/{job_id}/problems", response_class=HTMLResponse)

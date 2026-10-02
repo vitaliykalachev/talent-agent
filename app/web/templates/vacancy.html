@@ -84,7 +84,7 @@
 </details>
 
 <section class="card confirm" id="run">
-  {% if job and job.status in ("queued", "running", "paused") %}
+  {% if job and job.status != "done" %}
   {% include "eval_job.html" %}
   {% elif warming %}
   {# раздел сам обновляется раз в 10 секунд и покажет кнопки оценки, когда модель загрузится #}
