@@ -129,23 +129,34 @@ def test_402_mid_evaluation_stops_with_reason_and_retry_continues(
     mock,  # noqa: F811
     monkeypatch,
 ):
-    """Долг 3: деньги на ключе кончились посреди оценки. Экраны вакансии говорят
-    «Оценка остановлена» с причиной, а не «Оценка готова»; «Повторить оценку»
-    продолжает ту же оценку и уже оценённых заново не отправляет."""
+    """Долг 3 и ревью PR #3: деньги на ключе кончились посреди оценки. Запросы, которые
+    уже ушли (PARALLEL = 4), оплачены: их ответы дожидаются и сохраняют. Экраны вакансии
+    говорят «Оценка остановлена» с причиной, а не «Оценка готова»; «Повторить оценку»
+    продолжает ту же оценку и оценённых заново не отправляет."""
+    import time
+
     from app.jobs import run_pending
-    from app.llm import BALANCE_MESSAGE
+    from app.llm import BALANCE_MESSAGE, MockLLM
 
     v, p = base
-    monkeypatch.setattr(ev, "PARALLEL", 1)  # по одному, в порядке выдачи поиска
     first, second, third = ev.pool(session, v)
     people = [p[n].id for n in ("Громов", "Орлова", "Сидоров")]
     answers = dict(zip(people, standard(v, p), strict=True))
     broke = {**answers[second], "response": {"__error__": 402}}
     mock([answers[first], broke, answers[third]])
+    delay = {answers[first]["match"]: 1, answers[third]["match"]: 2}  # 402 приходит сразу
+    answer_slowly = MockLLM._call
+
+    def slow(self, schema, system, user):
+        time.sleep(next((s for m, s in delay.items() if m in user), 0))
+        return answer_slowly(self, schema, system, user)
+
+    monkeypatch.setattr(MockLLM, "_call", slow)
     job = run(session, v)
     started = session.get(Vacancy, v.id).last_run_at
     assert job.status == "failed" and job.error == BALANCE_MESSAGE
-    assert set(session.scalars(select(Match.candidate_id))) == {first}
+    assert set(session.scalars(select(Match.candidate_id))) == {first, third}  # оплаченные
+    delay.clear()
     for url in (f"/vacancies/{v.id}", f"/vacancies/{v.id}/results", f"/vacancies/{v.id}/job"):
         text = page(web, url)
         assert "Оценка остановлена" in text and BALANCE_MESSAGE in text, url
@@ -163,7 +174,8 @@ def test_402_mid_evaluation_stops_with_reason_and_retry_continues(
     session.expire_all()
     assert session.get(Job, job.id).status == "done"
     assert session.scalar(select(func.count(Job.id)).where(Job.kind == "evaluate")) == 1
-    assert not any(answers[first]["match"] in user for user in mock.calls[sent:])
+    resent = mock.calls[sent:]
+    assert len(resent) == 1 and answers[second]["match"] in resent[0]  # платим один раз
     assert set(session.scalars(select(Match.candidate_id))) == {first, second, third}
     assert session.get(Vacancy, v.id).last_run_at == started  # та же оценка, а не новая
     text = page(web, f"/vacancies/{v.id}/results")

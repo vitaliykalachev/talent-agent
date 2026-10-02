@@ -346,18 +346,21 @@ def run_parse(job_id: int) -> None:
                     c.parse_status, c.parse_error = "failed", "в резюме нет текста"
                 session.commit()
                 # Каждая запись сохраняется, как только пришёл ответ: после сбоя или
-                # остановки разобранные повторно не отправляются.
+                # остановки разобранные повторно не отправляются. Отказ ключа или баланса
+                # отменяет запросы, которые ещё не ушли, а ушедшие (до PARALLEL) оплачены:
+                # их ответы дожидаемся, сохраняем и только потом останавливаем задачу.
+                stop = None
                 for future in as_completed(futures):
+                    if future.cancelled():
+                        continue
                     c = futures[future]
                     try:
                         result = future.result()
                     except AuthError as exc:
+                        stop = stop or exc
                         for other in futures:
                             other.cancel()
-                        job.status, job.error = "failed", str(exc)
-                        job.finished_at = datetime.now()
-                        session.commit()
-                        return
+                        continue
                     if isinstance(result, LLMError):
                         c.parse_status, c.parse_error = "failed", str(result)
                     else:
@@ -368,6 +371,11 @@ def run_parse(job_id: int) -> None:
                         )
                         session.execute(delete(Embedding).where(Embedding.candidate_id == c.id))
                     session.commit()
+                if stop:  # прогресс не двигаем: повтор пройдёт пачку и пропустит разобранных
+                    job.status, job.error = "failed", str(stop)
+                    job.finished_at = datetime.now()
+                    session.commit()
+                    return
                 errors += [f"{c.id}: {c.parse_error}" for c in batch if c.parse_status == "failed"]
                 job.progress = min(job.progress + BATCH, job.total)
                 job.error = "\n".join(errors) or None
