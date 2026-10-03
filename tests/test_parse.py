@@ -198,12 +198,17 @@ def test_summary_sentence_with_number_not_in_resume_dropped():
     [
         ("Готов к командировкам, рассматриваю переезд.", "relocation_possible"),
         ("Готов рассматривать переезд в другой город.", "relocation_possible"),
+        ("Готова к переезду.", "relocation_possible"),
+        ("Переезд возможен.", "relocation_possible"),
         ("Переезд не рассматриваю.", "no_relocation"),
+        # ревью PR #4: «готовил» — не о переезде, остаётся догадка модели
+        ("Готовил к переезду оборудование цеха.", "relocation_desirable"),
     ],
 )
 def test_relocation_phrases_win_over_model_guess(phrase, expected):
     """Живой прогон 03.10.2026: «рассматриваю переезд» модель поняла как «хочет
-    переехать». Прямые слова резюме о переезде главнее догадки модели."""
+    переехать». Прямые слова резюме о переезде главнее догадки модели; шаблоны — только
+    о самом переезде."""
     from app.parse import CandidateProfile, to_parsed
 
     text = f"Начальник цеха, 8 лет\n{phrase}"
