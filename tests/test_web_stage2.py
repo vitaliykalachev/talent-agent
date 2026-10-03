@@ -1,5 +1,8 @@
 import json
 import re
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 from fastapi.testclient import TestClient
@@ -107,6 +110,150 @@ def test_unreachable_service_named_plainly(web, monkeypatch):
         assert "protocol" not in text
 
 
+def test_empty_balance_named_in_check(web, tmp_path):
+    """Живой прогон 0.4: на ключе кончились деньги — «Проверить подключение» говорит
+    об этом, а не про адрес, который будто бы не отвечает."""
+    from app.llm import BALANCE_MESSAGE
+
+    (tmp_path / "balance.json").write_text(
+        json.dumps({"match": "", "response": {"__error__": 402}})
+    )
+    config.save({"llm_fixtures": str(tmp_path)})
+    text = web.post("/settings/check").text
+    assert BALANCE_MESSAGE in text and "Адрес сервиса не отвечает" not in text
+
+
+def test_stopped_parse_shown_with_retry(web, five, session, tmp_path):  # noqa: F811
+    """Долг 3: разбор остановил пустой баланс. Главная и «Разбор всей базы» говорят
+    «Разбор остановлен» с причиной, «Повторить разбор» продолжает ту же задачу."""
+    from app.llm import BALANCE_MESSAGE
+
+    (tmp_path / "balance.json").write_text(
+        json.dumps({"match": "", "response": {"__error__": 402}})
+    )
+    config.save({"llm_fixtures": str(tmp_path)})
+    job = parse_all(session)
+    assert job.status == "failed"
+    for url, params in (("/", {}), ("/parse", {"scope": "all"})):
+        text = page(web, url, params=params)
+        assert "Разбор остановлен" in text and BALANCE_MESSAGE in text, url
+        assert f'action="/jobs/{job.id}/retry"' in text and "Повторить разбор" in text, url
+    config.save({"llm_fixtures": str(FIXTURES / "llm")})  # баланс пополнили
+    r = web.post(f"/jobs/{job.id}/retry", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/"
+    run_pending()
+    session.expire_all()
+    assert session.get(Job, job.id).status == "done" and waiting_ids(session) == []
+    assert "Разбор остановлен" not in page(web, "/")
+
+
+def test_crash_shown_in_plain_words_details_in_log(web, five, session, monkeypatch, caplog):  # noqa: F811
+    """Ревью PR #3: сбой кода посреди разбора — на экране общая фраза, а не
+    «AttributeError: …»; подробности — в журнале сервера."""
+    from app import parse
+    from app.jobs import UNEXPECTED
+
+    def broken(*_args, **_kwargs):
+        raise AttributeError("'NoneType' object has no attribute 'title'")
+
+    monkeypatch.setattr(parse, "to_parsed", broken)
+    job = parse_all(session)
+    assert job.status == "failed" and job.error == UNEXPECTED
+    home = page(web, "/")
+    assert "Разбор остановлен" in home and UNEXPECTED in home
+    assert "AttributeError" not in home and "NoneType" not in home
+    assert "AttributeError: 'NoneType' object has no attribute 'title'" in caplog.text
+
+
+def test_retry_refuses_other_sites(web, five, session, tmp_path):  # noqa: F811
+    """Ревью PR #3: «Повторить» тратит деньги — чужой сайт в том же браузере не может
+    прислать эту форму, как и очистку базы."""
+    (tmp_path / "balance.json").write_text(
+        json.dumps({"match": "", "response": {"__error__": 402}})
+    )
+    config.save({"llm_fixtures": str(tmp_path)})
+    job = parse_all(session)
+    foreign = {"Origin": "https://evil.example", "Sec-Fetch-Site": "cross-site"}
+    r = web.post(f"/jobs/{job.id}/retry", headers=foreign)
+    assert r.status_code == 403 and "Запрос пришёл не из программы" in r.text
+    session.expire_all()
+    assert session.get(Job, job.id).status == "failed"
+    own = {"Origin": "http://testserver", "Sec-Fetch-Site": "same-origin"}
+    assert web.post(f"/jobs/{job.id}/retry", headers=own, follow_redirects=False).status_code == 303
+
+
+@pytest.fixture
+def hub():
+    """Местный «хаб» на свободном порту: на запрос к модели отвечает кодом и телом из
+    `reply`, при `sleep` — с задержкой."""
+    reply: dict = {}
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.rfile.read(int(self.headers.get("Content-Length") or 0))
+            time.sleep(reply.get("sleep", 0))
+            body = reply["body"].encode()
+            self.send_response(reply["code"])
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{server.server_port}", reply
+    server.shutdown()
+    server.server_close()
+
+
+GARBAGE = "<pre>Traceback 0xDEADBEEF</pre>"  # в ответе хаба бывает что угодно
+UNKNOWN_MODEL = "Сервис не знает модель «claude-x»: проверьте названия моделей в «Дополнительно»."
+
+
+@pytest.mark.parametrize(
+    "code, said, expected",
+    [
+        (401, "invalid x-api-key", "Ключ не принят: проверьте, что он скопирован целиком."),
+        (403, "forbidden", "Ключ не принят: проверьте, что он скопирован целиком."),
+        (402, "Insufficient balance. Current balance: 0.01", "на его балансе не хватает денег"),
+        (404, "model: claude-x", UNKNOWN_MODEL),
+        (400, "invalid model name", UNKNOWN_MODEL),
+        (429, "rate limit exceeded", "Сервис просит подождать: слишком много запросов, "),
+        (500, "internal error", "Сервис временно недоступен, повторите позже."),
+        (529, "overloaded", "Сервис временно недоступен, повторите позже."),
+        (404, "Not Found", "Адрес сервиса не отвечает"),  # о модели ни слова — дело в адресе
+    ],
+)
+def test_check_names_refusal_by_class(web, hub, code, said, expected):
+    """Долг 4: «Проверить подключение» называет класс отказа своими словами, а текст
+    ответа сервиса на экран не выводит."""
+    url, reply = hub
+    reply.update(code=code, body=json.dumps({"error": {"message": f"{said} {GARBAGE}"}}))
+    form = {
+        "llm_provider": "anthropic",
+        "llm_base_url": url,
+        "llm_api_key": "k",
+        "llm_model_parse": "claude-x",
+    }
+    text = web.post("/settings/check", data=form).text
+    assert expected in text
+    assert "0xDEADBEEF" not in text and said not in text
+
+
+def test_check_timeout_still_names_address(web, hub, monkeypatch):
+    from app.web import routes
+
+    url, reply = hub
+    reply.update(code=200, body="{}", sleep=1)
+    monkeypatch.setattr(routes, "CHECK_TIMEOUT", 0.3)
+    form = {"llm_provider": "anthropic", "llm_base_url": url, "llm_api_key": "k"}
+    text = web.post("/settings/check", data=form).text
+    assert routes.NO_ADDRESS in text
+
+
 def test_link_to_resume_line_opens_resume_tab_on_phone(client):
     """Без JS: вкладка «Резюме» открывается по якорю (:target), обратно — ссылкой."""
     css = client.get("/static/app.css").text
@@ -197,6 +344,6 @@ def test_settings_save_key_hidden_and_check(web, tmp_path):
     )
     config.save({"llm_fixtures": str(tmp_path)})
     text = web.post("/settings/check").text
-    assert "Ключ доступа не подошёл. Проверьте, что скопировали его целиком." in text
+    assert "Ключ не принят: проверьте, что он скопирован целиком." in text
     for word in BANNED:
         assert word not in page(web, "/settings").lower()

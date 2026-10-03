@@ -405,9 +405,11 @@ def parse_confirm(request: Request, scope: str = "trial", job: int | None = None
         est = parse.estimate(s, ids)
         demo = config.is_demo()
         showcase = present.showcase(s) if demo else None
+        last = latest(s, "parse")
     return render(
         request,
         "parse_confirm.html",
+        stopped=last if last and last.status == "failed" else None,
         scope=scope,
         job_id=job,
         est=est,
@@ -421,6 +423,8 @@ def parse_confirm(request: Request, scope: str = "trial", job: int | None = None
 
 @router.post("/parse")
 async def parse_start(request: Request):
+    if refused := foreign(request):  # тратит деньги — только со страниц программы
+        return refused
     form = await request.form()
     scope = str(form.get("scope", "trial"))
     job_id = int(form["job"]) if form.get("job") else None
@@ -494,6 +498,24 @@ def job_resume(job_id: int):
             job.status = "queued"
             s.commit()
     return RedirectResponse("/", status_code=303)
+
+
+@router.post("/jobs/{job_id}/retry")
+def job_retry(request: Request, job_id: int):
+    """«Повторить оценку» и «Повторить разбор»: задача, которую остановил ключ, баланс или
+    сбой, продолжает с того места, где встала, как прерванная перезапуском. Сделанное
+    заново не отправляется, оценка остаётся той же (время начала не сдвигается)."""
+    if refused := foreign(request):  # тратит деньги — только со страниц программы
+        return refused
+    with db.SessionLocal() as s:
+        job = s.get(Job, job_id)
+        if not job:
+            raise HTTPException(404)
+        if job.status == "failed":
+            job.status, job.error, job.finished_at = "running", None, None
+            s.commit()
+        vacancy = job.payload.get("vacancy_id")
+    return RedirectResponse(f"/vacancies/{vacancy}/results" if vacancy else "/", status_code=303)
 
 
 @router.get("/jobs/{job_id}/problems", response_class=HTMLResponse)
@@ -863,6 +885,23 @@ NO_ADDRESS = (
     "Адрес сервиса не отвечает за 10 секунд. Проверьте поле «Адрес сервиса», "
     "например https://api.claudehub.fun."
 )
+UNKNOWN_MODEL = "Сервис не знает модель «{}»: проверьте названия моделей в «Дополнительно»."
+RATE_LIMITED = "Сервис просит подождать: слишком много запросов, повторите через минуту."
+SERVICE_DOWN = "Сервис временно недоступен, повторите позже."
+
+
+def refusal(exc: Exception, model: str) -> str:
+    """Отказ сервиса при проверке — по коду ответа, своими словами: в тексте ответа бывает
+    что угодно. Без кода (таймаут, сеть, неверный адрес) — что адрес не отвечает."""
+    cause = exc.__cause__ or exc
+    code = getattr(cause, "status_code", None)
+    if code in (400, 404) and "model" in str(cause).lower():
+        return UNKNOWN_MODEL.format(model)
+    if code == 429:
+        return RATE_LIMITED
+    if code is not None and code >= 500:
+        return SERVICE_DOWN
+    return NO_ADDRESS
 
 
 @router.post("/settings/check", response_class=HTMLResponse)
@@ -888,10 +927,11 @@ async def settings_check(request: Request):
             "Проверка связи. Ответь ok = true.",
             "Проверка связи: ответь ok = true.",
         )
-    except AuthError as exc:
+    except AuthError as exc:  # ключ или баланс: что делать — в самом тексте
         return _settings_page(request, str(exc), error=True, typed=typed)
-    except Exception:  # адрес не тот, сервис недоступен или отвечает не то
-        return _settings_page(request, NO_ADDRESS, error=True, typed=typed)
+    except Exception as exc:  # адрес не тот, сервис недоступен или отказал
+        model = typed["llm_model_parse"] or config.get("llm_model_parse")
+        return _settings_page(request, refusal(exc, model), error=True, typed=typed)
     seconds = f"{time.monotonic() - started:.1f}".replace(".", ",")
     message = f"Подключение работает: ответ за {seconds} с."
     if typed["llm_api_key"] or any(typed[k] != config.get(k) for k in CHECKED if typed[k]):

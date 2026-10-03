@@ -7,12 +7,12 @@ from io import BytesIO
 import pytest
 from fastapi.testclient import TestClient
 from openpyxl import load_workbook
-from sqlalchemy import select
+from sqlalchemy import func, select
 from test_evaluate import answer, base, matches, mock, run, standard  # noqa: F401 — фикстуры
 
 from app import evaluate as ev
 from app.main import create_app
-from app.models import Feedback, Job, Vacancy
+from app.models import Feedback, Job, Match, Vacancy
 
 BANNED = ("провайдер", "токен", "эмбеддинг", "парсинг", "cron", "prompt", "llm")
 
@@ -108,6 +108,81 @@ def test_new_vacancy_parsed_into_portrait_with_offers(web, session, base, mock):
 def test_short_description_is_asked_again(web, session):
     r = web.post("/vacancies/new", data={"description": "Нужен"})
     assert r.status_code == 400 and "хотя бы парой предложений" in r.text
+
+
+def test_empty_balance_on_new_vacancy_named_without_try_again(web, session, mock):  # noqa: F811
+    """Живой прогон 0.4: на ключе кончились деньги. Форма вакансии говорит, что делать,
+    а не «Попробуйте ещё раз» — повтор не поможет — и без «..» на стыке фраз."""
+    from app.llm import BALANCE_MESSAGE
+
+    mock([{"match": "", "schema": "VacancyDraft", "response": {"__error__": 402}}])
+    r = web.post("/vacancies/new", data={"description": "Нужен начальник литейного цеха от 5 лет."})
+    assert f"Не получилось разобрать описание. {BALANCE_MESSAGE}" in r.text
+    assert "Попробуйте ещё раз" not in r.text and ".." not in r.text
+    assert session.scalar(select(Vacancy)) is None
+
+
+def test_402_mid_evaluation_stops_with_reason_and_retry_continues(
+    web,
+    session,
+    base,  # noqa: F811
+    mock,  # noqa: F811
+    monkeypatch,
+):
+    """Долг 3 и ревью PR #3: деньги на ключе кончились посреди оценки. Запросы, которые
+    уже ушли (PARALLEL = 4), оплачены: их ответы дожидаются и сохраняют. Экраны вакансии
+    говорят «Оценка остановлена» с причиной, а не «Оценка готова»; «Повторить оценку»
+    продолжает ту же оценку и оценённых заново не отправляет."""
+    import time
+
+    from app.jobs import run_pending
+    from app.llm import BALANCE_MESSAGE, MockLLM
+
+    v, p = base
+    first, second, third = ev.pool(session, v)
+    people = [p[n].id for n in ("Громов", "Орлова", "Сидоров")]
+    answers = dict(zip(people, standard(v, p), strict=True))
+    broke = {**answers[second], "response": {"__error__": 402}}
+    mock([answers[first], broke, answers[third]])
+    delay = {answers[first]["match"]: 1, answers[third]["match"]: 2}  # 402 приходит сразу
+    answer_slowly = MockLLM._call
+
+    def slow(self, schema, system, user):
+        time.sleep(next((s for m, s in delay.items() if m in user), 0))
+        return answer_slowly(self, schema, system, user)
+
+    monkeypatch.setattr(MockLLM, "_call", slow)
+    job = run(session, v)
+    started = session.get(Vacancy, v.id).last_run_at
+    assert job.status == "failed" and job.error == BALANCE_MESSAGE
+    assert set(session.scalars(select(Match.candidate_id))) == {first, third}  # оплаченные
+    delay.clear()
+    for url in (f"/vacancies/{v.id}", f"/vacancies/{v.id}/results", f"/vacancies/{v.id}/job"):
+        text = page(web, url)
+        assert "Оценка остановлена" in text and BALANCE_MESSAGE in text, url
+        assert f'action="/jobs/{job.id}/retry"' in text and "Повторить оценку" in text, url
+        assert "Оценка готова" not in text, url
+    listing = page(web, "/vacancies")
+    assert "Оценка остановлена" in listing and BALANCE_MESSAGE in listing
+    assert f'action="/jobs/{job.id}/retry"' in listing
+    # при постоянном сбое клиент не застревает с одним «Повторить»: есть и «Оценить»
+    card = page(web, f"/vacancies/{v.id}")
+    assert f'action="/vacancies/{v.id}/evaluate"' in card and "Оценить 5 для проверки" in card
+
+    mock(standard(v, p))  # баланс пополнили
+    sent = len(mock.calls)
+    r = web.post(f"/jobs/{job.id}/retry", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == f"/vacancies/{v.id}/results"
+    run_pending()
+    session.expire_all()
+    assert session.get(Job, job.id).status == "done"
+    assert session.scalar(select(func.count(Job.id)).where(Job.kind == "evaluate")) == 1
+    resent = mock.calls[sent:]
+    assert len(resent) == 1 and answers[second]["match"] in resent[0]  # платим один раз
+    assert set(session.scalars(select(Match.candidate_id))) == {first, second, third}
+    assert session.get(Vacancy, v.id).last_run_at == started  # та же оценка, а не новая
+    text = page(web, f"/vacancies/{v.id}/results")
+    assert "Оценка остановлена" not in text and "Новый" not in text
 
 
 def test_results_groups_card_and_resume_link(web, session, base, mock):  # noqa: F811

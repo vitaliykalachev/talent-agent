@@ -7,6 +7,8 @@
 <p class="searching">Агент ищет по контактам: «{{ q }}»</p>
 {% elif r.mode == "words" %}
 <p class="searching">Агент ищет по словам: «{{ q }}» · <small>поиск по смыслу заработает после разбора резюме</small></p>
+{% elif r.mode == "warming" %}
+<p class="searching">Агент ищет по словам: «{{ q }}» · <small>{{ r.broken or "Поиск по смыслу ещё загружается, через минуту обновите страницу" }}</small></p>
 {% endif %}
 
 {% if chips %}

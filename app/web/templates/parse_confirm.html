@@ -3,6 +3,12 @@
 {% block content %}
 <p class="back"><a href="/">← На главную</a></p>
 <h1>{% if scope == "trial" %}Пробный разбор{% elif scope == "retry" %}Разобрать ещё раз{% else %}Разбор всей базы{% endif %}</h1>
+{% if stopped %}
+<div class="callout stop">
+  <p><strong>Разбор остановлен.</strong> {{ stopped.error|settings_hint }}</p>
+  <form method="post" action="/jobs/{{ stopped.id }}/retry"><button class="button" type="submit">Повторить разбор</button></form>
+</div>
+{% endif %}
 {% if demo and est.count %}
 {% include "demo_miss.html" %}
 {% elif est.count %}

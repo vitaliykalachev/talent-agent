@@ -32,7 +32,8 @@ def create_app(data_dir: Path | str | None = None) -> FastAPI:
     async def lifespan(_app: FastAPI):
         db.configure(data_dir)
         jobs.stopping.clear()
-        # Модель поиска и матрица грузятся один раз, в фоне: экраны открываются сразу.
+        # Модель поиска и матрица грузятся в фоне: экраны открываются сразу. Сбой загрузки
+        # пишется в журнал, а экраны запускают её снова (embed.ensure).
         warm = asyncio.create_task(asyncio.to_thread(embed.warm_up))
         task = asyncio.create_task(jobs.worker())
         schedule.start()

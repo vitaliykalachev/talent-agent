@@ -140,8 +140,17 @@ def test_cached_input_counted_in_volume(monkeypatch):
 
 def test_bad_key_gives_human_message(tmp_path):
     model = mock(tmp_path, response={"__error__": "auth"})
-    with pytest.raises(AuthError, match="Ключ доступа не подошёл"):
+    with pytest.raises(AuthError, match="Ключ не принят"):
         model.complete_structured(Answer, "s", "технолог")
+
+
+def test_empty_balance_named_plainly_and_not_retried(tmp_path):
+    """Живой прогон 0.4: хаб ответил 402 «Insufficient balance». Дело не в адресе и не в
+    сети, а в балансе ключа, и каждый следующий запрос откажет так же."""
+    model = mock(tmp_path, response={"__error__": 402})
+    with pytest.raises(AuthError, match="на его балансе не хватает денег"):
+        model.complete_structured(Answer, "s", "технолог")
+    assert len(model.calls) == 1
 
 
 def test_provider_chosen_by_settings(session, monkeypatch):

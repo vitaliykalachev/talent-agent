@@ -14,10 +14,17 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import db
+from app.llm import LLMError
 from app.models import Job
 
 log = logging.getLogger(__name__)
 stopping = threading.Event()  # выставляется при остановке приложения
+# Сбой не из известных классов (ключ, баланс, модель, подождать, недоступен): текст
+# исключения на экран не идёт, подробности — в журнале сервера
+UNEXPECTED = (
+    "Сервис ответил не так, как ожидалось. Повторите позже, если повторится — "
+    "пришлите снимок экрана."
+)
 
 
 def _handlers():
@@ -61,7 +68,7 @@ def run_job(job_id: int) -> None:
             if job is None:  # базу очистили, пока задача шла: записывать итог некуда
                 return
             job.status = "failed"
-            job.error = f"{type(exc).__name__}: {exc}"
+            job.error = str(exc) if isinstance(exc, LLMError) else UNEXPECTED
             job.finished_at = datetime.now()
             session.commit()
 

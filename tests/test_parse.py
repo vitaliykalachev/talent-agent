@@ -212,7 +212,59 @@ def test_bad_key_stops_job_with_human_message(five, session, tmp_path):
     config.save({"llm_fixtures": str(tmp_path)})
     job = parse_all(session)
     assert job.status == "failed"
-    assert job.error == "Ключ доступа не подошёл. Проверьте, что скопировали его целиком."
+    assert job.error == "Ключ не принят: проверьте, что он скопирован целиком."
+
+
+def test_402_mid_parse_keeps_answers_already_paid(five, session, tmp_path, monkeypatch):
+    """Ревью PR #3: 402 на одном резюме, а запросы по трём другим уже ушли (PARALLEL = 4)
+    и оплачены. Разбор дожидается их ответов, сохраняет и только потом останавливается;
+    «Повторить разбор» отправляет одно неразобранное резюме."""
+    import shutil
+    import time
+
+    folder = tmp_path / "llm"
+    shutil.copytree(FIXTURES / "llm", folder)
+    broke = {"match": "ООО «СКБ Контур»", "response": {"__error__": 402}}
+    (folder / "it.json").write_text(json.dumps(broke), encoding="utf-8")
+    config.save({"llm_fixtures": str(folder)})
+    names = ["it.txt", "finance.txt", "logistics.txt", "production.txt"]
+    answer_slowly, paid = MockLLM._call, []
+
+    def slow(self, schema, system, user):
+        if "ООО «СКБ Контур»" not in user:  # 402 приходит сразу, остальные — через 1 с
+            time.sleep(1)
+        answer = answer_slowly(self, schema, system, user)
+        paid.append(user)
+        return answer
+
+    monkeypatch.setattr(MockLLM, "_call", slow)
+    job = start_parse(session, [five[n].id for n in names])
+    run_pending()
+    session.expire_all()
+    job = session.get(Job, job.id)
+    assert job.status == "failed" and job.error == llm.BALANCE_MESSAGE
+    assert len(paid) == 3
+    assert [n for n in names if five[n].parse_status == "parsed"] == names[1:]
+
+    config.save({"llm_fixtures": str(FIXTURES / "llm")})  # баланс пополнили
+    paid.clear()
+    job.status, job.error = "running", None  # как «Повторить разбор»
+    session.commit()
+    run_pending()
+    session.expire_all()
+    assert len(paid) == 1 and "ООО «СКБ Контур»" in paid[0]
+    assert all(five[n].parse_status == "parsed" for n in names)
+
+
+def test_empty_balance_stops_job_with_human_message(five, session, tmp_path):
+    """На ключе кончились деньги (402): разбор останавливается на первом отказе с
+    понятной причиной, а не помечает каждое резюме «проверьте модель и адрес»."""
+    (tmp_path / "balance.json").write_text(
+        json.dumps({"match": "", "response": {"__error__": 402}})
+    )
+    config.save({"llm_fixtures": str(tmp_path)})
+    job = parse_all(session)
+    assert job.status == "failed" and job.error == llm.BALANCE_MESSAGE
 
 
 def test_resume_without_recorded_answer_is_failed_not_empty(five, session, tmp_path):

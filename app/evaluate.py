@@ -693,17 +693,21 @@ def run_evaluate(job_id: int) -> None:
                     return
                 futures = {ex.submit(_attempt, llm, v, c): (c, r) for c, r in todo[i : i + BATCH]}
                 # Каждый ответ сохраняется, как только пришёл: после сбоя или остановки
-                # оплаченные оценки не пропадают и повторно не отправляются.
+                # оплаченные оценки не пропадают и повторно не отправляются. Отказ ключа
+                # или баланса отменяет запросы, которые ещё не ушли, а ушедшие (до
+                # PARALLEL) оплачены: их ответы дожидаемся, сохраняем и только потом
+                # останавливаем задачу.
+                stop = None
                 for future in as_completed(futures):
+                    if future.cancelled():
+                        continue
                     c, reason = futures[future]
                     result = future.result()
                     if isinstance(result, AuthError):
+                        stop = stop or result
                         for other in futures:
                             other.cancel()
-                        job.status, job.error = "failed", str(result)
-                        job.finished_at = datetime.now()
-                        session.commit()
-                        return
+                        continue
                     if isinstance(result, Exception):
                         errors.append(f"{c.id}: {result}")
                         result = {"status": "failed", "error": str(result)}
@@ -720,6 +724,11 @@ def run_evaluate(job_id: int) -> None:
                         "tokens_out": job.payload.get("tokens_out", 0) + spent[1],
                     }
                     session.commit()
+                if stop:
+                    job.status, job.error = "failed", str(stop)
+                    job.finished_at = datetime.now()
+                    session.commit()
+                    return
         job.status, job.finished_at = "done", datetime.now()
         session.commit()
 
@@ -730,5 +739,5 @@ def _attempt(llm, v: Vacancy, c: Candidate):
     try:
         with db.SessionLocal() as s:
             return evaluate_one(llm, s, s.get(Vacancy, v.id), s.get(Candidate, c.id))
-    except LLMError as exc:  # в том числе AuthError: задача остановится с понятным текстом
+    except LLMError as exc:  # AuthError тоже: задача остановится, дождавшись ушедших запросов
         return exc

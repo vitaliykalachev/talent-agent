@@ -1,9 +1,15 @@
-<div id="eval-job"{% if job %} hx-get="/vacancies/{{ v.id }}/job" hx-trigger="every 2s" hx-swap="outerHTML"{% endif %}>
-{% if job %}
+{% set live = job and job.status in ("queued", "running", "paused") %}
+<div id="eval-job"{% if live %} hx-get="/vacancies/{{ v.id }}/job" hx-trigger="every 2s" hx-swap="outerHTML"{% endif %}>
+{% if live %}
   {% set pct = (100 * job.progress // job.total) if job.total else 0 %}
   <h4>{% if job.status == "queued" %}Оценка в очереди{% elif job.status == "paused" %}Оценка приостановлена{% else %}Агент оценивает кандидатов: {{ job.progress }} из {{ job.total or "…" }}{% endif %}</h4>
   <div class="bar-track"><div class="bar-fill" style="width:{{ pct }}%"></div></div>
   <p><small>Можно закрыть вкладку: оценка идёт без вас, результаты появляются по мере готовности.</small></p>
+{% elif job and job.status == "failed" %}
+  {# ключ, баланс или сбой: причина и продолжение с того же места #}
+  <h4>Оценка остановлена</h4>
+  <p>{{ job.error|settings_hint }}</p>
+  <form method="post" action="/jobs/{{ job.id }}/retry"><button class="button" type="submit">Повторить оценку</button></form>
 {% else %}
   <h4>Оценка готова</h4>
   <p><a href="/vacancies/{{ v.id }}/results">Обновить результат</a></p>

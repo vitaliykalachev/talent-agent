@@ -20,9 +20,11 @@
 </div>
 {% elif last %}
 <div class="card">
-  <h4>Разбор резюме: {{ last|job_status }}</h4>
+  <h4>{% if last.status == "failed" %}Разбор остановлен{% else %}Разбор резюме: {{ last|job_status }}{% endif %}</h4>
   {% if last.status == "failed" %}
+  {# ключ, баланс или сбой: причина и продолжение с того же места #}
   <p>{{ last.error|settings_hint }}</p>
+  <form method="post" action="/jobs/{{ last.id }}/retry"><button class="button" type="submit">Повторить разбор</button></form>
   {% elif last|job_status == "Не получилось" %}
   <p>Не получилось: ни одно резюме не разобрано. Причина: {{ reasons(last) }}.</p>
   <p><a class="button ghost" href="/jobs/{{ last.id }}/problems">Показать список</a>

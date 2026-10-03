@@ -7,6 +7,7 @@
 с опозданием, причина — в `summary.late`; если сорвался — в `error`.
 """
 
+import logging
 from datetime import datetime, timedelta
 
 from sqlalchemy import func, select
@@ -16,9 +17,11 @@ from app import evaluate as ev
 from app.embed import run_embed
 from app.importer.dedup import find_possible, open_pairs
 from app.importer.normalize import is_stale
+from app.jobs import UNEXPECTED
 from app.jobs import enqueue as enqueue_job
 from app.models import Candidate, Duplicate, Job, Match, NightRun, Vacancy
 
+log = logging.getLogger(__name__)
 LATE = timedelta(minutes=10)
 
 
@@ -237,10 +240,11 @@ def run_night(job_id: int) -> None:
                 problems=problems,
             )
             run.status = "done"
-        except Exception as exc:  # причина уходит в «Утро» первой строкой
+        except Exception:  # в «Утро» первой строкой — общая фраза, подробности — в журнал
+            log.exception("ночной прогон %s упал", run.id)
             s.rollback()
             run = s.get(NightRun, run.id)
-            run.status, run.error = "failed", f"Ночной прогон не получился: {exc}"
+            run.status, run.error = "failed", f"Ночной прогон не получился. {UNEXPECTED}"
             summary["error"] = run.error
         finally:  # запись прогона и задача закрываются, что бы ни случилось выше
             run.finished_at = datetime.now()
