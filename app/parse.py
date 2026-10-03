@@ -220,26 +220,29 @@ RELOCATION_SAID = [
 NUMBER_RE = re.compile(r"\d+(?:[.,]\d+)?")
 # «9 лет», «с 9 годами» — не «9-летний» и не «9 годовых»
 YEARS_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*(?:год(?:а|у|ом|е|ы|ов|ам|ами|ах)?|лет)\b")
+EXPERIENCE_RE = re.compile(r"\b(?:опыт|стаж(?!ир))", re.IGNORECASE)  # не «стажировка»
 SENTENCE_END_RE = re.compile(r"(?<=[.!?])\s+")
 
 
 def grounded(summary: str, text: str, years: float | None = None) -> str:
     """«Кратко» без фраз с числами, которых нет в резюме: модель пересчитывает «с 12 до
     5 дней» в «на 58 %» и приписывает «команду из 45 человек». Стаж модель считает по
-    датам сама («с 9 годами опыта»), поэтому число рядом с «год/лет» остаётся, если
-    расходится со стажем по местам работы `years` не больше чем на год."""
+    датам сама («с 9 годами опыта»), поэтому во фразе об опыте или стаже число рядом с
+    «год/лет» остаётся, если расходится со стажем по местам работы `years` не больше
+    чем на год. Срок в одной компании («более 15 лет в текущей компании») — не стаж:
+    такое число должно быть в резюме."""
     have = {n.replace(",", ".") for n in NUMBER_RE.findall(text)}
 
     def counted(m: re.Match) -> str:
         close = years is not None and abs(float(m[1].replace(",", ".")) - years) <= YEARS_MISMATCH
         return "" if close else m[0]
 
-    kept = [
-        s
-        for s in SENTENCE_END_RE.split(summary or "")
-        if {n.replace(",", ".") for n in NUMBER_RE.findall(YEARS_RE.sub(counted, s))} <= have
-    ]
-    return " ".join(kept)
+    def numbers(s: str) -> set[str]:
+        if EXPERIENCE_RE.search(s):
+            s = YEARS_RE.sub(counted, s)
+        return {n.replace(",", ".") for n in NUMBER_RE.findall(s)}
+
+    return " ".join(s for s in SENTENCE_END_RE.split(summary or "") if numbers(s) <= have)
 
 
 def without_company(title: str, company: str | None) -> str:
