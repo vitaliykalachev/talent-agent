@@ -193,6 +193,41 @@ def test_summary_sentence_with_number_not_in_resume_dropped():
     )
 
 
+def test_summary_keeps_experience_the_model_counted_by_dates():
+    """Ревью PR #4: стаж модель считает по датам сама, и «с 9 годами опыта» резалось —
+    числа 9 в резюме нет. Число рядом с «год/лет», равное стажу по местам работы ±1
+    год, остаётся; далёкий стаж, проценты и прочие числа без опоры — нет."""
+    from app.parse import CandidateProfile, Position, to_parsed
+
+    text = (
+        "Инженер-технолог\n"
+        "2015-03 — по настоящее время: АО «Завод», инженер-технолог\n"
+        "— снизил брак по сменам"
+    )
+    profile = CandidateProfile(
+        summary=(
+            "Инженер-технолог с 9 годами опыта на заводе. "
+            "На заводе с 2015 года. "
+            "Общий стаж 15 лет. "
+            "Снизил брак на 30 %."
+        ),
+        positions=[Position(title="Инженер-технолог", start="2015-03", is_current=True)],
+    )
+    c = Candidate(
+        raw_text=text,
+        full_name=None,
+        phones=[],
+        emails=[],
+        links=[],
+        resume_date=date(2024, 9, 1),
+    )
+    parsed = to_parsed(profile, c, seen=text)
+    assert parsed["total_years"] == 9.6
+    assert (
+        parsed["summary"] == "Инженер-технолог с 9 годами опыта на заводе. На заводе с 2015 года."
+    )
+
+
 @pytest.mark.parametrize(
     "phrase, expected",
     [

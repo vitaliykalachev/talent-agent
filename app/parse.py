@@ -218,17 +218,26 @@ RELOCATION_SAID = [
     ),
 ]
 NUMBER_RE = re.compile(r"\d+(?:[.,]\d+)?")
+# «9 лет», «с 9 годами» — не «9-летний» и не «9 годовых»
+YEARS_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*(?:год(?:а|у|ом|е|ы|ов|ам|ами|ах)?|лет)\b")
 SENTENCE_END_RE = re.compile(r"(?<=[.!?])\s+")
 
 
-def grounded(summary: str, text: str) -> str:
+def grounded(summary: str, text: str, years: float | None = None) -> str:
     """«Кратко» без фраз с числами, которых нет в резюме: модель пересчитывает «с 12 до
-    5 дней» в «на 58 %» и приписывает «команду из 45 человек»."""
+    5 дней» в «на 58 %» и приписывает «команду из 45 человек». Стаж модель считает по
+    датам сама («с 9 годами опыта»), поэтому число рядом с «год/лет» остаётся, если
+    расходится со стажем по местам работы `years` не больше чем на год."""
     have = {n.replace(",", ".") for n in NUMBER_RE.findall(text)}
+
+    def counted(m: re.Match) -> str:
+        close = years is not None and abs(float(m[1].replace(",", ".")) - years) <= YEARS_MISMATCH
+        return "" if close else m[0]
+
     kept = [
         s
         for s in SENTENCE_END_RE.split(summary or "")
-        if {n.replace(",", ".") for n in NUMBER_RE.findall(s)} <= have
+        if {n.replace(",", ".") for n in NUMBER_RE.findall(YEARS_RE.sub(counted, s))} <= have
     ]
     return " ".join(kept)
 
@@ -256,7 +265,8 @@ def to_parsed(profile: CandidateProfile, c: Candidate, seen: str | None = None) 
     """
     data = profile.model_dump()
     seen = model_text(c) if seen is None else seen
-    data["summary"] = grounded(data["summary"], seen)
+    counted = years_by_positions(data["positions"], c.resume_date or date.today())
+    data["summary"] = grounded(data["summary"], seen, counted)
     said = next((value for pattern, value in RELOCATION_SAID if pattern.search(seen)), None)
     data["relocation"] = said or data["relocation"]
     for pos in data["positions"]:
@@ -268,7 +278,6 @@ def to_parsed(profile: CandidateProfile, c: Candidate, seen: str | None = None) 
         data["summary_quote"] and quote_span(data["summary_quote"], c.raw_text)
     )
     stated = data["total_years"]
-    counted = years_by_positions(data["positions"], c.resume_date or date.today())
     data["total_years"] = counted if counted is not None else stated
     data["total_years_stated"] = stated
     data["total_years_check"] = (
