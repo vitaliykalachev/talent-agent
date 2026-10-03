@@ -166,6 +166,33 @@ def test_years_merge_overlaps_and_current_until_resume_date():
     assert years_by_positions(positions, date(2021, 12, 31)) == 6.0
 
 
+FINANCE = (
+    "Руководитель отдела отчётности, 11 лет\n"
+    "— сократил срок закрытия месяца с 12 до 5 дней\n"
+    "— прошёл 4 налоговые проверки без доначислений"
+)
+
+
+def test_summary_sentence_with_number_not_in_resume_dropped():
+    """Живой прогон 03.10.2026: «Кратко» пересчитало «с 12 до 5 дней» в «на 58 %».
+    Фраза с числом, которого нет в резюме, в «Кратко» не попадает; остальные остаются."""
+    from app.parse import CandidateProfile, to_parsed
+
+    profile = CandidateProfile(
+        summary=(
+            "Руководитель отдела отчётности с 11-летним опытом. "
+            "Сократил срок закрытия месяца на 58%. "
+            "Прошёл 4 налоговые проверки без доначислений."
+        )
+    )
+    c = Candidate(raw_text=FINANCE, full_name=None, phones=[], emails=[], links=[])
+    summary = to_parsed(profile, c, seen=FINANCE)["summary"]
+    assert summary == (
+        "Руководитель отдела отчётности с 11-летним опытом. "
+        "Прошёл 4 налоговые проверки без доначислений."
+    )
+
+
 def test_company_key_strips_forms_and_quotes():
     assert company_key("ООО «Ромашка»") == company_key("ромашка") == "ромашка"
     assert company_key('ПАО "Северсталь"') == "северсталь"

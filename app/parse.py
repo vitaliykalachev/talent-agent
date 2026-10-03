@@ -104,7 +104,9 @@ class CandidateProfile(BaseModel):
     salary_expect: Salary | None = Field(None, description="Ожидаемая зарплата")
     languages: list[str] = Field(default_factory=list)
     education: list[Education] = Field(default_factory=list)
-    summary: str = Field("", description="Три предложения своими словами: кто это и чем силён")
+    summary: str = Field(
+        "", description="Три предложения: кто это и чем силён — только то, что есть в резюме"
+    )
     summary_quote: str | None = Field(
         None, description="Дословный фрагмент резюме до 15 слов, на котором основано summary"
     )
@@ -123,7 +125,9 @@ SYSTEM = """Ты разбираешь резюме кандидата для к�
 - salary_expect — сумма в месяц числом, валюта, gross/net, если сказано.
 - relocation: no_relocation — не готов, relocation_possible — возможен,
   relocation_desirable — хочет переехать, unknown — не сказано.
-- summary — три коротких предложения своими словами: кто это, опыт, чем силён.
+- summary — три коротких предложения своими словами: кто это, опыт, чем силён. Только
+  то, что есть в резюме: без оценочных слов («успешно», «эффективно», «сильный»), без
+  чисел, которых нет в тексте, и без пересчётов («на 58 %» вместо «с 12 до 5 дней»).
 - Строки резюме пронумерованы: «12| текст». source_lines у каждого места работы —
   номера строк [от, до], где оно описано; номер ставь из начала строки, сам номер
   в значения полей не переноси.
@@ -181,6 +185,22 @@ def years_by_positions(positions: list[dict], resume_date: date) -> float | None
     return round((total + cur_stop - cur_start) / 12, 1)
 
 
+NUMBER_RE = re.compile(r"\d+(?:[.,]\d+)?")
+SENTENCE_END_RE = re.compile(r"(?<=[.!?])\s+")
+
+
+def grounded(summary: str, text: str) -> str:
+    """«Кратко» без фраз с числами, которых нет в резюме: модель пересчитывает «с 12 до
+    5 дней» в «на 58 %» и приписывает «команду из 45 человек»."""
+    have = {n.replace(",", ".") for n in NUMBER_RE.findall(text)}
+    kept = [
+        s
+        for s in SENTENCE_END_RE.split(summary or "")
+        if {n.replace(",", ".") for n in NUMBER_RE.findall(s)} <= have
+    ]
+    return " ".join(kept)
+
+
 def to_parsed(profile: CandidateProfile, c: Candidate, seen: str | None = None) -> dict:
     """Результат модели + проверки кода + прежние правки пользователя.
 
@@ -190,6 +210,7 @@ def to_parsed(profile: CandidateProfile, c: Candidate, seen: str | None = None) 
     """
     data = profile.model_dump()
     seen = model_text(c) if seen is None else seen
+    data["summary"] = grounded(data["summary"], seen)
     for pos in data["positions"]:
         pos["source_lines"] = valid_lines(pos["source_lines"], seen)
         pos["lines_ok"] = pos["source_lines"] is not None
