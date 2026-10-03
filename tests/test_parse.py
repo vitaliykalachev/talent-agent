@@ -193,6 +193,25 @@ def test_summary_sentence_with_number_not_in_resume_dropped():
     )
 
 
+@pytest.mark.parametrize(
+    "phrase, expected",
+    [
+        ("Готов к командировкам, рассматриваю переезд.", "relocation_possible"),
+        ("Готов рассматривать переезд в другой город.", "relocation_possible"),
+        ("Переезд не рассматриваю.", "no_relocation"),
+    ],
+)
+def test_relocation_phrases_win_over_model_guess(phrase, expected):
+    """Живой прогон 03.10.2026: «рассматриваю переезд» модель поняла как «хочет
+    переехать». Прямые слова резюме о переезде главнее догадки модели."""
+    from app.parse import CandidateProfile, to_parsed
+
+    text = f"Начальник цеха, 8 лет\n{phrase}"
+    c = Candidate(raw_text=text, full_name=None, phones=[], emails=[], links=[])
+    profile = CandidateProfile(relocation="relocation_desirable")
+    assert to_parsed(profile, c, seen=text)["relocation"] == expected
+
+
 def test_company_key_strips_forms_and_quotes():
     assert company_key("ООО «Ромашка»") == company_key("ромашка") == "ромашка"
     assert company_key('ПАО "Северсталь"') == "северсталь"

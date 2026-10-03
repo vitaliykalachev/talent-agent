@@ -100,7 +100,11 @@ class CandidateProfile(BaseModel):
     city: str | None = None
     relocation: Literal[
         "no_relocation", "relocation_possible", "relocation_desirable", "unknown"
-    ] = "unknown"
+    ] = Field(
+        "unknown",
+        description="no_relocation — переезд не рассматривает; relocation_possible — готов "
+        "рассмотреть («рассматриваю переезд»); relocation_desirable — сам хочет переехать",
+    )
     salary_expect: Salary | None = Field(None, description="Ожидаемая зарплата")
     languages: list[str] = Field(default_factory=list)
     education: list[Education] = Field(default_factory=list)
@@ -123,8 +127,10 @@ SYSTEM = """Ты разбираешь резюме кандидата для к�
   «сейчас», «по сей день», «до сих пор»), ставь is_current = true и end = null.
 - total_years — общий стаж в годах, как он указан в резюме; не указан — null.
 - salary_expect — сумма в месяц числом, валюта, gross/net, если сказано.
-- relocation: no_relocation — не готов, relocation_possible — возможен,
-  relocation_desirable — хочет переехать, unknown — не сказано.
+- relocation: no_relocation — переезд не рассматривает («переезд не рассматриваю»,
+  «без переезда»); relocation_possible — готов рассмотреть («рассматриваю переезд»,
+  «готов рассматривать переезд», «готов к переезду»); relocation_desirable — сам хочет
+  переехать («хочу переехать», «планирую переезд в …»); unknown — не сказано.
 - summary — три коротких предложения своими словами: кто это, опыт, чем силён. Только
   то, что есть в резюме: без оценочных слов («успешно», «эффективно», «сильный»), без
   чисел, которых нет в тексте, и без пересчётов («на 58 %» вместо «с 12 до 5 дней»).
@@ -185,6 +191,26 @@ def years_by_positions(positions: list[dict], resume_date: date) -> float | None
     return round((total + cur_stop - cur_start) / 12, 1)
 
 
+# Прямые слова резюме о переезде главнее догадки модели: «рассматриваю переезд» она
+# понимала как «хочет переехать». Отказ проверяется первым — в нём те же слова.
+RELOCATION_SAID = [
+    (
+        re.compile(
+            r"\bне\s+(?:рассматрива\w*|готов\w*\s+к)\s+переезд|\bпереезд\w*\s+не\s+рассматрива"
+            r"|\bбез\s+переезда",
+            re.IGNORECASE,
+        ),
+        "no_relocation",
+    ),
+    (
+        re.compile(
+            r"\b(?:рассматрива\w*|готов\w*\s+(?:рассматривать|рассмотреть|к))\s+переезд"
+            r"|\bпереезд\w*\s+(?:возмож|рассматрива)",
+            re.IGNORECASE,
+        ),
+        "relocation_possible",
+    ),
+]
 NUMBER_RE = re.compile(r"\d+(?:[.,]\d+)?")
 SENTENCE_END_RE = re.compile(r"(?<=[.!?])\s+")
 
@@ -211,6 +237,8 @@ def to_parsed(profile: CandidateProfile, c: Candidate, seen: str | None = None) 
     data = profile.model_dump()
     seen = model_text(c) if seen is None else seen
     data["summary"] = grounded(data["summary"], seen)
+    said = next((value for pattern, value in RELOCATION_SAID if pattern.search(seen)), None)
+    data["relocation"] = said or data["relocation"]
     for pos in data["positions"]:
         pos["source_lines"] = valid_lines(pos["source_lines"], seen)
         pos["lines_ok"] = pos["source_lines"] is not None
