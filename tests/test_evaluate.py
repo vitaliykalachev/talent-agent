@@ -589,6 +589,23 @@ def test_unexpected_reply_stops_after_batch_and_keeps_paid(session, base, mock, 
     assert session.get(Job, job.id).status == "done" and len(matches(session, v)) == 5
 
 
+@pytest.mark.parametrize(
+    "requirement, line, shown",
+    [
+        ("Опыт только в продажах", "Менеджер по продажам B2B, 2018 — 2024", True),
+        ("Опыт только в продажах", "Опыт производственный, не только продажи", False),
+        ("Опыт только в продажах", "Работал во всех отделах, кроме продаж", False),
+        ("Только с опытом в продажах", "Руководил цехом, опытом делился с мастерами", False),
+        ("Опыт только в продажах", "директор по производству АО «ОДК-Кузнецов» стаж 19 лет", False),
+    ],
+)
+def test_avoid_met_needs_the_word_itself(requirement, line, shown):
+    """Ревью PR #4: «есть» по «чего точно не надо» вида «только X» подтверждает строка,
+    где X стоит целым словом (любая форма) и без «не» или «кроме» перед ним. Основы слов
+    ловили «не только продажи», а в «только с опытом…» искали «опыто»."""
+    assert ev._shows(line, [1, 1], requirement) is shown
+
+
 def test_crash_mid_batch_keeps_paid_evaluations(session, base, mock, monkeypatch):
     """Правка ревью этапа 3, №4: сбой на третьем ответе (как SIGKILL) — два оплаченных
     ответа уже сохранены, после перезапуска в модель уходит только третий кандидат."""

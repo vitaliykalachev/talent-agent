@@ -18,6 +18,7 @@ import re
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
+from functools import lru_cache
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, BeforeValidator, Field
@@ -500,19 +501,47 @@ def _quote(text: str, lines: list[int] | None, limit: int = 240) -> str | None:
     return quote[:limit].rsplit(" ", 1)[0].rstrip(" ,.;:—–-") + "…"
 
 
-ONLY_RE = re.compile(r"\bтольк\w*\s+(?:в\s+|на\s+|с\s+)?([а-яё]{4,})", re.IGNORECASE)
+ONLY_RE = re.compile(r"\bтольк\w*\b(.*)", re.IGNORECASE)
+WORD_RE = re.compile(r"[а-яёa-z]+", re.IGNORECASE)
+# После «только» ищем само нежелательное: предлоги и общие слова пропускаем
+# («только с опытом в продажах» — это о продажах, а не об опыте)
+NOT_THE_POINT = {
+    "в", "во", "на", "с", "со", "по", "из", "у", "к", "о", "об",
+    "опыт", "работа", "стаж", "сфера", "область", "отрасль", "направление", "должность",
+}  # fmt: skip
+NEGATIONS = {"не", "кроме"}
+
+
+@lru_cache(maxsize=1)
+def _morph():
+    from natasha import MorphVocab  # pymorphy2 с поправкой natasha под Python 3.12
+
+    return MorphVocab()
+
+
+@lru_cache(maxsize=4096)
+def _lemmas(word: str) -> frozenset[str]:
+    word = word.lower().replace("ё", "е")
+    return frozenset({word, *(p.normal_form.replace("ё", "е") for p in _morph().parse(word)[:3])})
 
 
 def _shows(text: str, lines: list[int], name: str) -> bool:
     """«Есть» по «чего точно не надо» вида «только в продажах» подтверждает строка, где
-    это видно. Модель бывает отвечает «есть», цитируя как раз обратное («опыт
-    производственный, не только продажи»), — такое «есть» балл не режет."""
-    topic = ONLY_RE.search(name)
-    if not topic:
+    это слово стоит целым (в любой форме) и без «не» или «кроме» за три слова до него.
+    Модель бывает отвечает «есть», цитируя как раз обратное («опыт производственный,
+    не только продажи»), — такое «есть» балл не режет."""
+    only = ONLY_RE.search(name)
+    point = next(
+        (_lemmas(w) for w in WORD_RE.findall(only.group(1)) if not _lemmas(w) & NOT_THE_POINT),
+        None,
+    ) if only else None  # fmt: skip
+    if point is None:
         return True
-    stem = topic.group(1)[:5].lower().replace("ё", "е")
-    quoted = "\n".join(text.split("\n")[lines[0] - 1 : lines[1]])
-    return stem in quoted.lower().replace("ё", "е")
+    words = WORD_RE.findall("\n".join(text.split("\n")[lines[0] - 1 : lines[1]]).lower())
+    return any(
+        _lemmas(w) & point and not NEGATIONS & set(words[max(i - 3, 0) : i])
+        for i, w in enumerate(words)
+    )
 
 
 def checked(evaluation: Evaluation, requirements: list[dict], text: str) -> list[dict]:
