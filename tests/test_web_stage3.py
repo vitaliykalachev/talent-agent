@@ -122,6 +122,23 @@ def test_empty_balance_on_new_vacancy_named_without_try_again(web, session, mock
     assert session.scalar(select(Vacancy)) is None
 
 
+def test_unexpected_reply_on_new_vacancy_plain_words_no_leftover(web, session, mock, monkeypatch):  # noqa: F811
+    """Повторное ревью PR #3: хаб ответил 200 с HTML на разбор описания — форма отдавала
+    500 «Internal Server Error» и оставляла пустую вакансию. Теперь общая фраза, а
+    вакансии нет."""
+    from app.jobs import UNEXPECTED
+    from app.llm import MockLLM
+
+    def html(self, schema, system, user):
+        raise AttributeError("'str' object has no attribute 'usage'")  # HTML вместо ответа
+
+    monkeypatch.setattr(MockLLM, "_call", html)
+    data = {"description": "Нужен начальник литейного цеха от 5 лет."}
+    r = web.post("/vacancies/new", data=data, headers={"HX-Request": "true"})
+    assert r.status_code == 200 and f"Не получилось разобрать описание. {UNEXPECTED}" in r.text
+    assert "AttributeError" not in r.text and session.scalar(select(Vacancy)) is None
+
+
 def test_402_mid_evaluation_stops_with_reason_and_retry_continues(
     web,
     session,

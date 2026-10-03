@@ -84,7 +84,8 @@
 </details>
 
 <section class="card confirm" id="run">
-  {% if broken %}<p>{{ broken }}.</p>{% endif %}
+  {# поиск по смыслу не загрузился: раз в минуту раздел спрашивает снова и сам вернётся к обычному виду #}
+  {% if broken %}<p hx-get="/vacancies/{{ v.id }}" hx-trigger="every 60s" hx-select="#run" hx-target="#run" hx-swap="outerHTML">{{ broken }}.</p>{% endif %}
   {% if job and job.status in ("queued", "running", "paused") %}
   {% include "eval_job.html" %}
   {% else %}
