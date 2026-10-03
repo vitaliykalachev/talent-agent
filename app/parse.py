@@ -233,12 +233,16 @@ def grounded(summary: str, text: str) -> str:
 
 def without_company(title: str, company: str | None) -> str:
     """Должность без названия компании: в резюме одной строкой модель их склеивала
-    («директор по производству АО «ОДК-Кузнецов»»). Только компания — как есть."""
-    at = (title or "").lower().find((company or "").lower()) if company else -1
-    if at < 0:
+    («директор по производству АО «ОДК-Кузнецов»»). Название убирается только целым, по
+    границам слов («Инженер по магнитным системам» при компании «Магнит» не трогаем), и
+    только если от должности остаётся хотя бы 5 знаков."""
+    if not company or not title:
         return title
-    rest = " ".join((title[:at] + title[at + len(company) :]).split()).strip(" ,—–-:;")
-    return rest or title
+    found = re.search(rf"(?<!\w){re.escape(company.strip())}(?!\w)", title, re.IGNORECASE)
+    if not found:
+        return title
+    rest = " ".join((title[: found.start()] + title[found.end() :]).split()).strip(" ,—–-:;")
+    return rest if len(rest) >= 5 else title
 
 
 def to_parsed(profile: CandidateProfile, c: Candidate, seen: str | None = None) -> dict:

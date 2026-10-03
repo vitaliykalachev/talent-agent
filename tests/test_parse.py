@@ -225,11 +225,21 @@ def test_company_not_part_of_position_title():
                 title="директор по производству АО «ОДК-Кузнецов»", company="АО «ОДК-Кузнецов»"
             ),
             Position(title="Магнит", company="Магнит"),  # только компания — оставляем как есть
+            # ревью PR #4: название — часть слова, а не слово
+            Position(title="Инженер по магнитным системам", company="Магнит"),
+            Position(title="СММ ИП Иванов", company="ИП Иванов"),  # осталось бы «СММ»
+            Position(title="Повар ООО «Вкус»", company="ООО «Вкус»"),
         ]
     )
     c = Candidate(raw_text=text, full_name=None, phones=[], emails=[], links=[])
     titles = [p["title"] for p in to_parsed(profile, c, seen=text)["positions"]]
-    assert titles == ["директор по производству", "Магнит"]
+    assert titles == [
+        "директор по производству",
+        "Магнит",
+        "Инженер по магнитным системам",
+        "СММ ИП Иванов",
+        "Повар",
+    ]
 
 
 def test_company_key_strips_forms_and_quotes():
