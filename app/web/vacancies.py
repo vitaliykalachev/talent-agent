@@ -1,5 +1,6 @@
 """Экраны «Вакансии», «Новая вакансия», карточка вакансии и «Результат по вакансии»."""
 
+import logging
 import math
 import threading
 from datetime import date, datetime, timedelta
@@ -11,11 +12,13 @@ from sqlalchemy import case, func, select
 
 from app import db, embed, export
 from app import evaluate as ev
+from app.jobs import UNEXPECTED
 from app.llm import DEMO_MISS, AuthError, LLMError
 from app.models import Candidate, Feedback, Job, Match, Vacancy
 from app.web import present
-from app.web.routes import foreign, render, templates
+from app.web.routes import render, templates
 
+log = logging.getLogger(__name__)
 router = APIRouter()
 
 FEEDBACK_KINDS = {
@@ -178,6 +181,13 @@ async def vacancy_create(request: Request):
             if isinstance(exc, AuthError):  # ключ или баланс: повтор не поможет, совет — в тексте
                 error = f"Не получилось разобрать описание. {exc}"
             return _new_form_error(request, form, error, 502)
+        except Exception:  # хаб ответил не тем (HTML вместо ответа и т. п.): без пустой вакансии
+            log.exception("Разбор описания вакансии упал на ответе сервиса")
+            s.rollback()
+            s.delete(v)
+            s.commit()
+            error = f"Не получилось разобрать описание. {UNEXPECTED}"
+            return _new_form_error(request, form, error, 502)
     return _go(request, f"/vacancies/{v.id}")
 
 
@@ -281,8 +291,6 @@ async def conditions_save(request: Request, vacancy_id: int):
 
 @router.post("/vacancies/{vacancy_id}/evaluate")
 async def evaluate_start(request: Request, vacancy_id: int):
-    if refused := foreign(request):  # тратит деньги — только со страниц программы
-        return refused
     form = await request.form()
     ids = [int(i) for i in form.getlist("ids") if str(i).isdigit()] or None
     with db.SessionLocal() as s:

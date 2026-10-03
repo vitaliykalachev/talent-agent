@@ -21,6 +21,15 @@ from app.models import Candidate, Job
 
 
 @pytest.fixture(autouse=True)
+def testclient_is_this_computer(monkeypatch):
+    """TestClient ходит на http://testserver: для тестов это имя «этого компьютера»,
+    иначе защита от чужих сайтов (routes.foreign) отклонит любой POST."""
+    from app.web import routes
+
+    monkeypatch.setattr(routes, "LOCAL_HOSTS", {*routes.LOCAL_HOSTS, "testserver"})
+
+
+@pytest.fixture(autouse=True)
 def worker_not_stopped():
     """Выход из TestClient останавливает воркер (jobs.stopping); следующий тест должен
     начинать с работающим run_pending, в каком бы порядке ни шли тесты."""

@@ -6,6 +6,7 @@
 Исправления пользователя (`parsed["edits"]`) повторный разбор не перезаписывает.
 """
 
+import logging
 import math
 import re
 import threading
@@ -20,9 +21,12 @@ from sqlalchemy.orm import Session
 
 from app import config, db
 from app.anonymize import anonymize, numbered, quote_span, valid_lines
-from app.jobs import enqueue, stopping
-from app.llm import AuthError, LLMError, get_llm
+from app.jobs import UNEXPECTED, enqueue, stopping
+from app.lines import resume_lines
+from app.llm import AuthError, LLMError, StopError, get_llm
 from app.models import Candidate, Embedding, Job
+
+log = logging.getLogger(__name__)
 
 BATCH = 20
 PARALLEL = 4
@@ -57,7 +61,7 @@ RELOCATION = {
 
 
 class Position(BaseModel):
-    title: str = Field(description="Должность")
+    title: str = Field(description="Должность, без названия компании")
     company: str | None = Field(None, description="Компания")
     industry: str | None = Field(None, description="Отрасль компании")
     start: str | None = Field(None, description="Начало: ГГГГ-ММ или ГГГГ")
@@ -99,11 +103,17 @@ class CandidateProfile(BaseModel):
     city: str | None = None
     relocation: Literal[
         "no_relocation", "relocation_possible", "relocation_desirable", "unknown"
-    ] = "unknown"
+    ] = Field(
+        "unknown",
+        description="no_relocation — переезд не рассматривает; relocation_possible — готов "
+        "рассмотреть («рассматриваю переезд»); relocation_desirable — сам хочет переехать",
+    )
     salary_expect: Salary | None = Field(None, description="Ожидаемая зарплата")
     languages: list[str] = Field(default_factory=list)
     education: list[Education] = Field(default_factory=list)
-    summary: str = Field("", description="Три предложения своими словами: кто это и чем силён")
+    summary: str = Field(
+        "", description="Три предложения: кто это и чем силён — только то, что есть в резюме"
+    )
     summary_quote: str | None = Field(
         None, description="Дословный фрагмент резюме до 15 слов, на котором основано summary"
     )
@@ -115,14 +125,19 @@ SYSTEM = """Ты разбираешь резюме кандидата для к�
 Правила:
 - Бери только то, что написано в резюме. Не выдумывай: нет данных — null или пустой список.
 - desired_position — желаемая должность, если она названа.
-- Места работы — от новых к старым. Даты — ГГГГ-ММ или ГГГГ.
+- Места работы — от новых к старым. Даты — ГГГГ-ММ или ГГГГ. title — только должность,
+  без названия компании: компания — в поле company.
 - Если работа идёт сейчас («по н.в.», «по н/в», «по настоящее время», «наст. время»,
   «сейчас», «по сей день», «до сих пор»), ставь is_current = true и end = null.
 - total_years — общий стаж в годах, как он указан в резюме; не указан — null.
 - salary_expect — сумма в месяц числом, валюта, gross/net, если сказано.
-- relocation: no_relocation — не готов, relocation_possible — возможен,
-  relocation_desirable — хочет переехать, unknown — не сказано.
-- summary — три коротких предложения своими словами: кто это, опыт, чем силён.
+- relocation: no_relocation — переезд не рассматривает («переезд не рассматриваю»,
+  «без переезда»); relocation_possible — готов рассмотреть («рассматриваю переезд»,
+  «готов рассматривать переезд», «готов к переезду»); relocation_desirable — сам хочет
+  переехать («хочу переехать», «планирую переезд в …»); unknown — не сказано.
+- summary — три коротких предложения своими словами: кто это, опыт, чем силён. Только
+  то, что есть в резюме: без оценочных слов («успешно», «эффективно», «сильный»), без
+  чисел, которых нет в тексте, и без пересчётов («на 58 %» вместо «с 12 до 5 дней»).
 - Строки резюме пронумерованы: «12| текст». source_lines у каждого места работы —
   номера строк [от, до], где оно описано; номер ставь из начала строки, сам номер
   в значения полей не переноси.
@@ -133,8 +148,10 @@ SYSTEM = """Ты разбираешь резюме кандидата для к�
 
 
 def model_text(c: Candidate) -> str:
-    """Обезличенный текст резюме; строки совпадают со строками `raw_text`."""
-    return anonymize(c.raw_text[:MAX_CHARS], c.full_name, c.phones, c.emails, c.links)
+    """Обезличенный текст резюме для разбора и оценки; строки совпадают со строками
+    `resume_lines(raw_text)` — по ним же подсвечивает «Показать в резюме»."""
+    text = resume_lines(c.raw_text)[:MAX_CHARS]
+    return anonymize(text, c.full_name, c.phones, c.emails, c.links)
 
 
 def model_input(c: Candidate) -> str:
@@ -178,6 +195,70 @@ def years_by_positions(positions: list[dict], resume_date: date) -> float | None
     return round((total + cur_stop - cur_start) / 12, 1)
 
 
+# Прямые слова резюме о переезде главнее догадки модели: «рассматриваю переезд» она
+# понимала как «хочет переехать». Отказ проверяется первым — в нём те же слова.
+# Только фразы о самом переезде: «готовил к переезду оборудование» — не о человеке.
+READY = r"готов(?:а|ы)?"
+RELOCATION_SAID = [
+    (
+        re.compile(
+            rf"\bпереезд\s+не\s+рассматриваю|\bне\s+рассматриваю\s+переезд"
+            rf"|\bне\s+{READY}\s+(?:к|на)\s+переезд",
+            re.IGNORECASE,
+        ),
+        "no_relocation",
+    ),
+    (
+        re.compile(
+            rf"\b{READY}\s+(?:к|на)\s+переезд|\b{READY}\s+рассматривать\s+переезд"
+            r"|\bрассматриваю\s+переезд|\bпереезд\s+возможен",
+            re.IGNORECASE,
+        ),
+        "relocation_possible",
+    ),
+]
+NUMBER_RE = re.compile(r"\d+(?:[.,]\d+)?")
+# «9 лет», «с 9 годами» — не «9-летний» и не «9 годовых»
+YEARS_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*(?:год(?:а|у|ом|е|ы|ов|ам|ами|ах)?|лет)\b")
+EXPERIENCE_RE = re.compile(r"\b(?:опыт|стаж(?!ир))", re.IGNORECASE)  # не «стажировка»
+SENTENCE_END_RE = re.compile(r"(?<=[.!?])\s+")
+
+
+def grounded(summary: str, text: str, years: float | None = None) -> str:
+    """«Кратко» без фраз с числами, которых нет в резюме: модель пересчитывает «с 12 до
+    5 дней» в «на 58 %» и приписывает «команду из 45 человек». Стаж модель считает по
+    датам сама («с 9 годами опыта»), поэтому во фразе об опыте или стаже число рядом с
+    «год/лет» остаётся, если расходится со стажем по местам работы `years` не больше
+    чем на год. Срок в одной компании («более 15 лет в текущей компании») — не стаж:
+    такое число должно быть в резюме."""
+    have = {n.replace(",", ".") for n in NUMBER_RE.findall(text)}
+
+    def counted(m: re.Match) -> str:
+        close = years is not None and abs(float(m[1].replace(",", ".")) - years) <= YEARS_MISMATCH
+        return "" if close else m[0]
+
+    def numbers(s: str) -> set[str]:
+        if EXPERIENCE_RE.search(s):
+            s = YEARS_RE.sub(counted, s)
+        return {n.replace(",", ".") for n in NUMBER_RE.findall(s)}
+
+    return " ".join(s for s in SENTENCE_END_RE.split(summary or "") if numbers(s) <= have)
+
+
+def without_company(title: str, company: str | None) -> str:
+    """Должность без названия компании: в резюме одной строкой модель их склеивала
+    («директор по производству АО «ОДК-Кузнецов»»). Название убирается только целым, по
+    границам слов («Инженер по магнитным системам» при компании «Магнит» не трогаем), и
+    только если от должности остаётся хотя бы 5 знаков."""
+    if not company or not title:
+        return title
+    found = re.search(rf"(?<!\w){re.escape(company.strip())}(?!\w)", title, re.IGNORECASE)
+    if not found:
+        return title
+    rest = " ".join((title[: found.start()] + title[found.end() :]).split()).strip(" ,—–-:;")
+    return rest if len(rest) >= 5 else title
+
+
 def to_parsed(profile: CandidateProfile, c: Candidate, seen: str | None = None) -> dict:
     """Результат модели + проверки кода + прежние правки пользователя.
 
@@ -187,7 +268,12 @@ def to_parsed(profile: CandidateProfile, c: Candidate, seen: str | None = None) 
     """
     data = profile.model_dump()
     seen = model_text(c) if seen is None else seen
+    counted = years_by_positions(data["positions"], c.resume_date or date.today())
+    data["summary"] = grounded(data["summary"], seen, counted)
+    said = next((value for pattern, value in RELOCATION_SAID if pattern.search(seen)), None)
+    data["relocation"] = said or data["relocation"]
     for pos in data["positions"]:
+        pos["title"] = without_company(pos["title"], pos["company"])
         pos["source_lines"] = valid_lines(pos["source_lines"], seen)
         pos["lines_ok"] = pos["source_lines"] is not None
         pos["company_key"] = company_key(pos["company"])
@@ -195,7 +281,6 @@ def to_parsed(profile: CandidateProfile, c: Candidate, seen: str | None = None) 
         data["summary_quote"] and quote_span(data["summary_quote"], c.raw_text)
     )
     stated = data["total_years"]
-    counted = years_by_positions(data["positions"], c.resume_date or date.today())
     data["total_years"] = counted if counted is not None else stated
     data["total_years_stated"] = stated
     data["total_years_check"] = (
@@ -305,10 +390,13 @@ def estimate(session: Session, ids: list[int]) -> dict:
 def _ask(llm, text: str):
     try:
         return llm.complete_structured(CandidateProfile, SYSTEM, text)
-    except AuthError:
+    except StopError:
         raise
     except LLMError as exc:
         return exc
+    except Exception as exc:  # хаб ответил не тем (HTML вместо ответа и т. п.)
+        log.exception("Разбор резюме упал на ответе сервиса")
+        raise StopError(UNEXPECTED) from exc
 
 
 def _tick(job: Job) -> None:
@@ -347,8 +435,9 @@ def run_parse(job_id: int) -> None:
                 session.commit()
                 # Каждая запись сохраняется, как только пришёл ответ: после сбоя или
                 # остановки разобранные повторно не отправляются. Отказ ключа или баланса
-                # отменяет запросы, которые ещё не ушли, а ушедшие (до PARALLEL) оплачены:
-                # их ответы дожидаемся, сохраняем и только потом останавливаем задачу.
+                # отменяет запросы, которые ещё не ушли; ответ не по делу (HTML вместо
+                # ответа) — нет: остальные запросы пачки, вероятно, пройдут. Ушедшие
+                # оплачены: их ответы дожидаемся, сохраняем и только потом останавливаем.
                 stop = None
                 for future in as_completed(futures):
                     if future.cancelled():
@@ -356,10 +445,11 @@ def run_parse(job_id: int) -> None:
                     c = futures[future]
                     try:
                         result = future.result()
-                    except AuthError as exc:
+                    except StopError as exc:
                         stop = stop or exc
-                        for other in futures:
-                            other.cancel()
+                        if isinstance(exc, AuthError):  # дальше откажет каждый запрос
+                            for other in futures:
+                                other.cancel()
                         continue
                     if isinstance(result, LLMError):
                         c.parse_status, c.parse_error = "failed", str(result)

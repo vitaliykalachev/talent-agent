@@ -14,10 +14,9 @@ from sqlalchemy import func, select
 
 from app import db, mail
 from app import evaluate as ev
-from app.embed import run_embed
 from app.importer.dedup import find_possible, open_pairs
 from app.importer.normalize import is_stale
-from app.jobs import UNEXPECTED
+from app.jobs import UNEXPECTED, run_job
 from app.jobs import enqueue as enqueue_job
 from app.models import Candidate, Duplicate, Job, Match, NightRun, Vacancy
 
@@ -120,10 +119,10 @@ def _mark_stale(s) -> int:
     return newly
 
 
-def _subjob(s, kind: str, payload: dict, handler) -> Job:
+def _subjob(s, kind: str, payload: dict) -> Job:
     job = enqueue_job(s, kind, payload)
     s.commit()
-    handler(job.id)
+    run_job(job.id)  # сбой задачи — «остановлена», а не «идёт»: воркер не повторит её
     s.expire_all()
     return s.get(Job, job.id)
 
@@ -131,7 +130,9 @@ def _subjob(s, kind: str, payload: dict, handler) -> Job:
 def _evaluate(s, v: Vacancy, started: datetime) -> tuple[dict, list[dict]]:
     job = ev.start(s, v, v.top_n)
     if job.status in ("queued", "running"):
-        ev.run_evaluate(job.id)
+        # через run_job: упавшая оценка становится «остановлена», а не остаётся «идёт»,
+        # иначе воркер запустил бы её второй раз и заплатил за те же запросы
+        run_job(job.id)
     s.expire_all()
     job = s.get(Job, job.id)
     rows = list(
@@ -192,10 +193,13 @@ def run_night(job_id: int) -> None:
             new_pairs = find_possible(s)
             job.progress = 2
             s.commit()
-            embedded = _subjob(s, "embed", {}, run_embed).total
+            vacancies, problems = [], []
+            embedding = _subjob(s, "embed", {})
+            embedded = embedding.progress  # сколько построено, а не сколько собирались
+            if embedding.status == "failed":  # «Утро» говорит об этом, а не «всё в порядке»
+                problems.append({"text": embedding.error, "link": "/"})
             job.progress = 3
             s.commit()
-            vacancies, problems = [], []
             for v in s.scalars(select(Vacancy).where(Vacancy.schedule_enabled.is_(True))):
                 item, trouble = _evaluate(s, v, started)
                 vacancies.append(item)

@@ -191,6 +191,7 @@ def test_twice_failed_load_named_honestly(
     )
     assert card_s < 2 and found_s < 2
     assert honest in card and LOADING not in card
+    assert 'hx-trigger="every 60s"' in card  # вернётся к обычному виду без ручного обновления
     assert "Все найденные кандидаты уже оценены" in card  # подбор по словам, без модели
     assert honest in found and "Громов Илья Сергеевич" in found
     for text in (card, found):

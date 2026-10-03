@@ -13,10 +13,12 @@
 
 import hashlib
 import json
+import logging
 import re
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
+from functools import lru_cache
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, BeforeValidator, Field
@@ -25,10 +27,12 @@ from sqlalchemy.orm import Session
 
 from app import config, db, search
 from app.anonymize import anonymize, line_range, numbered, valid_lines
-from app.jobs import enqueue, stopping
-from app.llm import AuthError, LLMError, get_llm
+from app.jobs import UNEXPECTED, enqueue, stopping
+from app.llm import AuthError, LLMError, StopError, get_llm
 from app.models import Candidate, Feedback, Job, Match, Vacancy
-from app.parse import MAX_CHARS, MIN_CHARS, RELOCATION
+from app.parse import MAX_CHARS, MIN_CHARS, RELOCATION, model_text
+
+log = logging.getLogger(__name__)
 
 MUST_MAX, NICE_MAX, AVOID_MAX = 6, 4, 3
 MANY = 10  # больше требований — предупреждение: список размывает оценку
@@ -392,7 +396,8 @@ SYSTEM_EVAL = """Ты проверяешь резюме кандидата на 
   считается no_data. Не угадывай: нет опоры в тексте — no_data.
 - note — одна короткая фраза, что именно написано в этих строках.
 Для требований «чего точно не надо» verdict = met значит, что это нежелательное в
-резюме есть и видно в указанных строках.
+резюме есть и видно в указанных строках. Если резюме показывает обратное (в требовании
+«только продажи», а человек руководил производством), ставь not_met.
 concerns — два главных сомнения, со строками или с evidence_lines = null, если сомнение в
 том, чего в резюме нет. questions — три вопроса на первый созвон; сначала о том, чего
 нет в резюме. fit_summary — итог в одно-два предложения.
@@ -436,10 +441,6 @@ def _corrections(session: Session, v: Vacancy, c: Candidate) -> list[str]:
         "other": "рекрутер не согласен",
     }
     return [f"«{f.text}» — {labels.get(f.kind, f.kind)}" for f in rows]
-
-
-def model_text(c: Candidate) -> str:
-    return anonymize(c.raw_text[:MAX_CHARS], c.full_name, c.phones, c.emails, c.links)
 
 
 SENTENCE_RE = re.compile(r"(?<=[.!?;])\s+|\n+")
@@ -500,6 +501,49 @@ def _quote(text: str, lines: list[int] | None, limit: int = 240) -> str | None:
     return quote[:limit].rsplit(" ", 1)[0].rstrip(" ,.;:—–-") + "…"
 
 
+ONLY_RE = re.compile(r"\bтольк\w*\b(.*)", re.IGNORECASE)
+WORD_RE = re.compile(r"[а-яёa-z]+", re.IGNORECASE)
+# После «только» ищем само нежелательное: предлоги и общие слова пропускаем
+# («только с опытом в продажах» — это о продажах, а не об опыте)
+NOT_THE_POINT = {
+    "в", "во", "на", "с", "со", "по", "из", "у", "к", "о", "об",
+    "опыт", "работа", "стаж", "сфера", "область", "отрасль", "направление", "должность",
+}  # fmt: skip
+NEGATIONS = {"не", "кроме"}
+
+
+@lru_cache(maxsize=1)
+def _morph():
+    from natasha import MorphVocab  # pymorphy2 с поправкой natasha под Python 3.12
+
+    return MorphVocab()
+
+
+@lru_cache(maxsize=4096)
+def _lemmas(word: str) -> frozenset[str]:
+    word = word.lower().replace("ё", "е")
+    return frozenset({word, *(p.normal_form.replace("ё", "е") for p in _morph().parse(word)[:3])})
+
+
+def _shows(text: str, lines: list[int], name: str) -> bool:
+    """«Есть» по «чего точно не надо» вида «только в продажах» подтверждает строка, где
+    это слово стоит целым (в любой форме) и без «не» или «кроме» за три слова до него.
+    Модель бывает отвечает «есть», цитируя как раз обратное («опыт производственный,
+    не только продажи»), — такое «есть» балл не режет."""
+    only = ONLY_RE.search(name)
+    point = next(
+        (_lemmas(w) for w in WORD_RE.findall(only.group(1)) if not _lemmas(w) & NOT_THE_POINT),
+        None,
+    ) if only else None  # fmt: skip
+    if point is None:
+        return True
+    words = WORD_RE.findall("\n".join(text.split("\n")[lines[0] - 1 : lines[1]]).lower())
+    return any(
+        _lemmas(w) & point and not NEGATIONS & set(words[max(i - 3, 0) : i])
+        for i, w in enumerate(words)
+    )
+
+
 def checked(evaluation: Evaluation, requirements: list[dict], text: str) -> list[dict]:
     """Вердикты по требованиям вакансии: строки проверены по тексту, который видела модель;
     вердикт без существующих строк → «нет данных»; требование без ответа — тоже."""
@@ -509,6 +553,8 @@ def checked(evaluation: Evaluation, requirements: list[dict], text: str) -> list
         ch = answers.get(r["id"])
         lines = valid_lines(ch.evidence_lines, text) if ch else None
         verdict = ch.verdict if ch and lines else "no_data"
+        if verdict == "met" and r["kind"] == "avoid" and not _shows(text, lines, r["name"]):
+            verdict = "no_data"  # строка не о том нежелательном — «есть» не подтверждено
         out.append(
             {
                 "requirement_id": r["id"],
@@ -694,19 +740,21 @@ def run_evaluate(job_id: int) -> None:
                 futures = {ex.submit(_attempt, llm, v, c): (c, r) for c, r in todo[i : i + BATCH]}
                 # Каждый ответ сохраняется, как только пришёл: после сбоя или остановки
                 # оплаченные оценки не пропадают и повторно не отправляются. Отказ ключа
-                # или баланса отменяет запросы, которые ещё не ушли, а ушедшие (до
-                # PARALLEL) оплачены: их ответы дожидаемся, сохраняем и только потом
-                # останавливаем задачу.
+                # или баланса отменяет запросы, которые ещё не ушли; ответ не по делу
+                # (HTML вместо ответа) — нет: остальные запросы пачки, вероятно, пройдут.
+                # Ушедшие (до PARALLEL) оплачены: их ответы дожидаемся, сохраняем и только
+                # потом останавливаем задачу.
                 stop = None
                 for future in as_completed(futures):
                     if future.cancelled():
                         continue
                     c, reason = futures[future]
                     result = future.result()
-                    if isinstance(result, AuthError):
+                    if isinstance(result, StopError):
                         stop = stop or result
-                        for other in futures:
-                            other.cancel()
+                        if isinstance(result, AuthError):  # дальше откажет каждый запрос
+                            for other in futures:
+                                other.cancel()
                         continue
                     if isinstance(result, Exception):
                         errors.append(f"{c.id}: {result}")
@@ -739,5 +787,8 @@ def _attempt(llm, v: Vacancy, c: Candidate):
     try:
         with db.SessionLocal() as s:
             return evaluate_one(llm, s, s.get(Vacancy, v.id), s.get(Candidate, c.id))
-    except LLMError as exc:  # AuthError тоже: задача остановится, дождавшись ушедших запросов
+    except LLMError as exc:  # StopError тоже: задача остановится, дождавшись ушедших запросов
         return exc
+    except Exception:  # хаб ответил не тем (HTML вместо ответа и т. п.): в журнал и стоп
+        log.exception("Оценка кандидата %s упала на ответе сервиса", c.id)
+        return StopError(UNEXPECTED)

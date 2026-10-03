@@ -210,6 +210,22 @@ def warm_up() -> None:
 
 
 def run_embed(job_id: int) -> None:
+    """Задача отпечатков. Сбой локальной модели — не ответ сервиса ИИ: в задаче остаётся
+    «Отпечатки не построены: <причина>», подробности — в журнале."""
+    try:
+        _embed(job_id)
+    except Exception as exc:
+        log.exception("Отпечатки не построены")
+        with db.SessionLocal() as session:
+            job = session.get(Job, job_id)
+            if job is None:  # базу очистили, пока задача шла
+                return
+            job.status, job.error = "failed", f"Отпечатки не построены: {_why(exc)}"
+            job.finished_at = datetime.now()
+            session.commit()
+
+
+def _embed(job_id: int) -> None:
     name = model_name()
     with db.SessionLocal() as session:
         job = session.get(Job, job_id)

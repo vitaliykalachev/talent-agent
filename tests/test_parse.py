@@ -166,6 +166,130 @@ def test_years_merge_overlaps_and_current_until_resume_date():
     assert years_by_positions(positions, date(2021, 12, 31)) == 6.0
 
 
+FINANCE = (
+    "Руководитель отдела отчётности, 11 лет\n"
+    "— сократил срок закрытия месяца с 12 до 5 дней\n"
+    "— прошёл 4 налоговые проверки без доначислений"
+)
+
+
+def test_summary_sentence_with_number_not_in_resume_dropped():
+    """Живой прогон 03.10.2026: «Кратко» пересчитало «с 12 до 5 дней» в «на 58 %».
+    Фраза с числом, которого нет в резюме, в «Кратко» не попадает; остальные остаются."""
+    from app.parse import CandidateProfile, to_parsed
+
+    profile = CandidateProfile(
+        summary=(
+            "Руководитель отдела отчётности с 11-летним опытом. "
+            "Сократил срок закрытия месяца на 58%. "
+            "Прошёл 4 налоговые проверки без доначислений."
+        )
+    )
+    c = Candidate(raw_text=FINANCE, full_name=None, phones=[], emails=[], links=[])
+    summary = to_parsed(profile, c, seen=FINANCE)["summary"]
+    assert summary == (
+        "Руководитель отдела отчётности с 11-летним опытом. "
+        "Прошёл 4 налоговые проверки без доначислений."
+    )
+
+
+def test_summary_keeps_experience_the_model_counted_by_dates():
+    """Ревью PR #4: стаж модель считает по датам сама, и «с 9 годами опыта» резалось —
+    числа 9 в резюме нет. Во фразе об опыте или стаже число рядом с «год/лет», равное
+    стажу по местам работы ±1 год, остаётся. Срок в одной компании («Более 9 лет в ООО
+    «Литейщик»» при неполных пяти годах там) — не стаж; далёкий стаж, проценты и прочие
+    числа без опоры тоже уходят. В демо так ушли «Более 15 лет в текущей компании» и
+    «Более 8 лет работает в ООО «Деловые Линии»»."""
+    from app.parse import CandidateProfile, Position, to_parsed
+
+    text = (
+        "Инженер-технолог\n"
+        "2015-03 — 2019-12: АО «Завод», инженер-технолог\n"
+        "2020-01 — по настоящее время: ООО «Литейщик», ведущий технолог\n"
+        "— снизил брак по сменам"
+    )
+    profile = CandidateProfile(
+        summary=(
+            "Инженер-технолог с 9 годами опыта на литейном производстве. "
+            "Более 9 лет работает в ООО «Литейщик». "
+            "На производстве с 2015 года. "
+            "Общий стаж 15 лет. "
+            "Снизил брак на 30 %."
+        ),
+        positions=[
+            Position(title="Ведущий технолог", start="2020-01", is_current=True),
+            Position(title="Инженер-технолог", start="2015-03", end="2019-12"),
+        ],
+    )
+    c = Candidate(
+        raw_text=text,
+        full_name=None,
+        phones=[],
+        emails=[],
+        links=[],
+        resume_date=date(2024, 9, 1),
+    )
+    parsed = to_parsed(profile, c, seen=text)
+    assert parsed["total_years"] == 9.6
+    assert parsed["summary"] == (
+        "Инженер-технолог с 9 годами опыта на литейном производстве. На производстве с 2015 года."
+    )
+
+
+@pytest.mark.parametrize(
+    "phrase, expected",
+    [
+        ("Готов к командировкам, рассматриваю переезд.", "relocation_possible"),
+        ("Готов рассматривать переезд в другой город.", "relocation_possible"),
+        ("Готова к переезду.", "relocation_possible"),
+        ("Переезд возможен.", "relocation_possible"),
+        ("Переезд не рассматриваю.", "no_relocation"),
+        # ревью PR #4: «готовил» — не о переезде, остаётся догадка модели
+        ("Готовил к переезду оборудование цеха.", "relocation_desirable"),
+    ],
+)
+def test_relocation_phrases_win_over_model_guess(phrase, expected):
+    """Живой прогон 03.10.2026: «рассматриваю переезд» модель поняла как «хочет
+    переехать». Прямые слова резюме о переезде главнее догадки модели; шаблоны — только
+    о самом переезде."""
+    from app.parse import CandidateProfile, to_parsed
+
+    text = f"Начальник цеха, 8 лет\n{phrase}"
+    c = Candidate(raw_text=text, full_name=None, phones=[], emails=[], links=[])
+    profile = CandidateProfile(relocation="relocation_desirable")
+    assert to_parsed(profile, c, seen=text)["relocation"] == expected
+
+
+def test_company_not_part_of_position_title():
+    """Живой прогон 03.10.2026: в резюме одной строкой модель склеила должность с
+    компанией, и таблица разбора показала «директор по производству АО «ОДК-Кузнецов»,
+    АО «ОДК-Кузнецов»»."""
+    from app.parse import CandidateProfile, Position, to_parsed
+
+    text = "директор по производству АО «ОДК-Кузнецов» стаж 19 лет"
+    profile = CandidateProfile(
+        positions=[
+            Position(
+                title="директор по производству АО «ОДК-Кузнецов»", company="АО «ОДК-Кузнецов»"
+            ),
+            Position(title="Магнит", company="Магнит"),  # только компания — оставляем как есть
+            # ревью PR #4: название — часть слова, а не слово
+            Position(title="Инженер по магнитным системам", company="Магнит"),
+            Position(title="СММ ИП Иванов", company="ИП Иванов"),  # осталось бы «СММ»
+            Position(title="Повар ООО «Вкус»", company="ООО «Вкус»"),
+        ]
+    )
+    c = Candidate(raw_text=text, full_name=None, phones=[], emails=[], links=[])
+    titles = [p["title"] for p in to_parsed(profile, c, seen=text)["positions"]]
+    assert titles == [
+        "директор по производству",
+        "Магнит",
+        "Инженер по магнитным системам",
+        "СММ ИП Иванов",
+        "Повар",
+    ]
+
+
 def test_company_key_strips_forms_and_quotes():
     assert company_key("ООО «Ромашка»") == company_key("ромашка") == "ромашка"
     assert company_key('ПАО "Северсталь"') == "северсталь"
@@ -254,6 +378,39 @@ def test_402_mid_parse_keeps_answers_already_paid(five, session, tmp_path, monke
     session.expire_all()
     assert len(paid) == 1 and "ООО «СКБ Контур»" in paid[0]
     assert all(five[n].parse_status == "parsed" for n in names)
+
+
+def test_unexpected_reply_mid_parse_keeps_answers_already_paid(five, session, monkeypatch):
+    """Повторное ревью PR #3: хаб ответил 200 с HTML на одном резюме из пяти
+    (PARALLEL = 4) — адаптер падает с AttributeError. Остальные четыре ответа
+    сохраняются, задача останавливается с общей фразой, повтор отправляет одно резюме."""
+    import time
+
+    from app.jobs import UNEXPECTED
+
+    broken, answer_slowly, paid = {"on": True}, MockLLM._call, []
+
+    def html_on_it(self, schema, system, user):
+        if broken["on"] and "ООО «СКБ Контур»" in user:
+            raise AttributeError("'str' object has no attribute 'usage'")  # HTML вместо ответа
+        time.sleep(1)
+        answer = answer_slowly(self, schema, system, user)
+        paid.append(user)
+        return answer
+
+    monkeypatch.setattr(MockLLM, "_call", html_on_it)
+    job = parse_all(session)
+    assert job.status == "failed" and job.error == UNEXPECTED
+    assert len(paid) == 4 and five["it.txt"].parse_status == "new"
+    assert sum(c.parse_status == "parsed" for c in five.values()) == 4
+
+    broken["on"], paid[:] = False, []
+    job.status, job.error = "running", None  # как «Повторить разбор»
+    session.commit()
+    run_pending()
+    session.expire_all()
+    assert len(paid) == 1 and "ООО «СКБ Контур»" in paid[0]
+    assert all(c.parse_status == "parsed" for c in five.values())
 
 
 def test_empty_balance_stops_job_with_human_message(five, session, tmp_path):

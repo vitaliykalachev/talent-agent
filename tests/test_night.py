@@ -289,6 +289,69 @@ def test_night_marks_stale_embeds_new_and_evaluates_only_new(session, night_base
     )
 
 
+def test_failed_embeddings_named_on_morning(session, night_base, mock, monkeypatch):  # noqa: F811
+    """Ревью PR #4: ночная задача отпечатков упала (локальная модель не загрузилась) —
+    «Утро» говорит об этом своими словами, а не «всё в порядке», и не считает
+    отпечатки, которых нет."""
+    from app.jobs import UNEXPECTED
+    from app.models import Job
+
+    def broken(texts, kind):
+        raise OSError("We couldn't connect to 'https://huggingface.co' to load files")
+
+    monkeypatch.setattr(embed, "encode", broken)
+    night.enqueue()
+    run_pending()
+    [run] = runs(session)
+    [job] = session.scalars(select(Job).where(Job.kind == "embed"))
+    reason = "Отпечатки не построены: файлы модели не скачались"
+    assert job.status == "failed" and job.error == reason and job.error != UNEXPECTED
+    assert run.status == "done" and run.summary["base"]["embedded"] == 0
+    assert reason in [p["text"] for p in run.summary["problems"]]
+    view = morning.view(session)
+    failed = next(sec for sec in view["sections"] if sec["title"] == "Не получилось")
+    assert reason in [row["text"] for row in failed["rows"]]
+
+
+def test_unexpected_reply_at_night_fails_job_without_second_run(
+    session,
+    night_base,
+    mock,  # noqa: F811
+    monkeypatch,
+):
+    """Повторное ревью PR #3: хаб ответил 200 с HTML посреди ночной оценки. Задача
+    оценки становится «остановлена», а не остаётся «идёт», и воркер не запускает её
+    второй раз (раньше 8 кандидатов стоили 16 запросов)."""
+    from app.jobs import UNEXPECTED
+    from app.llm import MockLLM
+    from app.models import Job
+
+    asked = []
+
+    def html(self, schema, system, user):
+        asked.append(user)
+        raise AttributeError("'str' object has no attribute 'usage'")  # HTML вместо ответа
+
+    original = MockLLM._call
+    monkeypatch.setattr(
+        MockLLM,
+        "_call",
+        lambda self, schema, system, user: (
+            html(self, schema, system, user)
+            if schema.__name__ == "Evaluation"
+            else original(self, schema, system, user)
+        ),
+    )
+    night.enqueue()
+    run_pending()
+    [run] = runs(session)
+    evaluations = list(session.scalars(select(Job).where(Job.kind == "evaluate")))
+    assert [(j.status, j.error) for j in evaluations] == [("failed", UNEXPECTED)]
+    assert run.status == "done" and len(asked) == 1
+    run_pending()  # воркер не берёт остановленную оценку второй раз
+    assert len(asked) == 1
+
+
 def test_failed_night_run_shows_reason_first(session, monkeypatch, caplog):
     """Сбой ночного прогона — первой строкой «Утра». Текст исключения на экран не идёт
     (ревью PR #3): там общая фраза, подробности — в журнале сервера."""
