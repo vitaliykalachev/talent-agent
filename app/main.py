@@ -50,9 +50,10 @@ def create_app(data_dir: Path | str | None = None) -> FastAPI:
 
     @app.middleware("http")
     async def own_pages_only(request, call_next):
-        """Всё, что меняет данные или тратит деньги (POST, PUT, DELETE), — только со
-        страниц программы: чужой сайт в том же браузере получает 403 (routes.foreign)."""
-        if request.method not in ("GET", "HEAD", "OPTIONS") and (refused := foreign(request)):
+        """Только имена этого компьютера, а всё, что меняет данные или тратит деньги
+        (POST, PUT, DELETE), — только со страниц программы: остальное получает 403
+        (routes.foreign)."""
+        if refused := foreign(request):
             return refused
         return await call_next(request)
 

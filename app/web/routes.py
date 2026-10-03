@@ -940,23 +940,26 @@ LOCAL_HOSTS = {"127.0.0.1", "localhost", "[::1]"}  # программа слуш
 
 
 def foreign(request: Request) -> PlainTextResponse | None:
-    """Всё, что меняет данные или тратит деньги, — только со своих страниц (проверяет
-    промежуточный слой в app/main.py для любого POST, PUT и DELETE). Чужой сайт в том же
-    браузере мог бы прислать форму на 127.0.0.1 — например, «Проверить подключение» со
-    своим адресом сервиса, и сохранённый ключ ушёл бы к нему. Браузер помечает такой
-    запрос заголовками Sec-Fetch-Site и Origin; без них (curl, тесты) запрос свой. Host —
-    только имена этого компьютера: чужой домен, указывающий на 127.0.0.1 (DNS-rebinding),
-    не пройдёт."""
-    site = request.headers.get("sec-fetch-site")
-    origin = request.headers.get("origin")
+    """403 для чужих запросов; проверяет промежуточный слой в app/main.py.
+
+    Host у любого запроса — только имена этого компьютера: чужой домен, указывающий на
+    127.0.0.1 (DNS-rebinding), иначе читал бы страницы с резюме и слал формы как свой.
+    Всё, что меняет данные или тратит деньги (POST, PUT, DELETE), — ещё и только со
+    своих страниц. Чужой сайт в том же браузере мог бы прислать форму на 127.0.0.1 —
+    например, «Проверить подключение» со своим адресом сервиса, и сохранённый ключ ушёл
+    бы к нему. Браузер помечает такой запрос заголовками Sec-Fetch-Site и Origin; без них
+    (curl, тесты) запрос свой. GET по ссылке из письма или с другого сайта они не
+    касаются: он ничего не меняет."""
     host = request.headers.get("host", "")
     name = host.split("]")[0] + "]" if host.startswith("[") else host.rsplit(":", 1)[0]
+    if name.lower() not in LOCAL_HOSTS:
+        return PlainTextResponse(FOREIGN, status_code=403)
+    if request.method in ("GET", "HEAD", "OPTIONS"):
+        return None
+    site = request.headers.get("sec-fetch-site")
+    origin = request.headers.get("origin")
     ours = f"{request.url.scheme}://{host}"
-    if (
-        site not in (None, "same-origin", "none")
-        or origin not in (None, ours)
-        or name.lower() not in LOCAL_HOSTS
-    ):
+    if site not in (None, "same-origin", "none") or origin not in (None, ours):
         return PlainTextResponse(FOREIGN, status_code=403)
     return None
 

@@ -3,7 +3,8 @@
 Повторное ревью PR #3: ревьюер живьём увёл сохранённый ключ. Чужой сайт в том же
 браузере прислал «Проверить подключение» со своим адресом сервиса, а ключ подставился
 из настроек. Теперь любой POST, PUT или DELETE с чужим Origin, Sec-Fetch-Site или Host
-(DNS-rebinding) получает 403 и ничего не делает; GET не трогаем.
+(DNS-rebinding) получает 403 и ничего не делает. Чужое имя в Host получает 403 и на
+GET: иначе чужой домен, указывающий на 127.0.0.1, читал бы страницы с резюме.
 """
 
 import pytest
@@ -47,7 +48,7 @@ def test_night_run_from_other_site_refused(web, session):
     assert session.scalar(select(func.count(NightRun.id))) == 0
 
 
-def test_own_forms_and_htmx_pass_get_untouched(web, session):
+def test_own_forms_and_htmx_pass(web, session):
     htmx = {**OWN, "HX-Request": "true"}
     r = web.post("/settings", data={"parse_limit": "150"}, headers=htmx)
     assert r.status_code == 200 and config.get("parse_limit") == "150"
@@ -55,4 +56,15 @@ def test_own_forms_and_htmx_pass_get_untouched(web, session):
     assert session.scalar(select(func.count(NightRun.id))) == 1
     for host in ("127.0.0.1:8000", "localhost:8001", "[::1]:8000"):
         assert web.post("/settings", data={}, headers={"Host": host}).status_code == 200, host
-    assert web.get("/settings", headers={"Host": "evil.example"}).status_code == 200  # GET
+
+
+def test_get_over_rebinding_host_refused_mail_links_pass(web):
+    """Ревью PR #4: GET с чужим именем в Host — тоже 403, иначе чужой домен, указывающий
+    на 127.0.0.1, прочитал бы страницы с резюме. Ссылки из письма ведут на 127.0.0.1 и
+    проходят, даже когда браузер помечает переход «с другого сайта» (почта в браузере)."""
+    for path in ("/settings", "/candidates", "/static/app.css"):
+        r = web.get(path, headers={"Host": "evil.example:8000"})
+        assert r.status_code == 403 and REFUSED in r.text, path
+    mail = {"Host": "127.0.0.1:8000", "Sec-Fetch-Site": "cross-site"}
+    for path in ("/morning", "/health", "/static/app.css"):
+        assert web.get(path, headers=mail).status_code == 200, path
