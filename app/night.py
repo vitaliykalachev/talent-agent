@@ -193,10 +193,13 @@ def run_night(job_id: int) -> None:
             new_pairs = find_possible(s)
             job.progress = 2
             s.commit()
-            embedded = _subjob(s, "embed", {}).total
+            vacancies, problems = [], []
+            embedding = _subjob(s, "embed", {})
+            embedded = embedding.progress  # сколько построено, а не сколько собирались
+            if embedding.status == "failed":  # «Утро» говорит об этом, а не «всё в порядке»
+                problems.append({"text": embedding.error, "link": "/"})
             job.progress = 3
             s.commit()
-            vacancies, problems = [], []
             for v in s.scalars(select(Vacancy).where(Vacancy.schedule_enabled.is_(True))):
                 item, trouble = _evaluate(s, v, started)
                 vacancies.append(item)
