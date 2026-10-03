@@ -25,11 +25,16 @@ DEFAULTS = {
     "llm_model_parse": "claude-haiku-4.5",
     "llm_model_eval": "claude-sonnet-5",
     "llm_fixtures": str(ROOT / "tests" / "fixtures" / "llm"),  # только для mock
-    # Тарифы в долларах за миллион входных и выходных единиц текста.
-    "price_parse_in": "1",
-    "price_parse_out": "5",
-    "price_eval_in": "2",
-    "price_eval_out": "10",
+    # Тарифы в долларах за миллион входных и выходных единиц текста — по замеру на
+    # ClaudeHub 03.10.2026. Хаб берёт за вход и ответ одинаково (прайс /v1/models:
+    # claude-haiku-4.5 — $0,2, claude-sonnet-5 — $0,4 за миллион), а с баланса в рублях
+    # списывает больше прайса по курсу 84 ₽. Значения подобраны так, чтобы середина вилки
+    # на экране совпала со списанием: разбор 10 резюме — 0,87 ₽, оценка 10 кандидатов —
+    # 1,45 ₽ (прежние $1/$5 и $2/$10 завышали цену в 4–12 раз).
+    "price_parse_in": "0.44",
+    "price_parse_out": "0.44",
+    "price_eval_in": "0.49",
+    "price_eval_out": "0.49",
     "usd_rub": "84",
     "parse_limit": "200",  # резюме за один запуск «Начать разбор всей базы»; 0 — без лимита
     "embed_model": "sergeyzh/BERTA",  # запасной вариант: intfloat/multilingual-e5-base
