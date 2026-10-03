@@ -1,6 +1,7 @@
 import json
 import re
 import time
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -8,9 +9,11 @@ from sqlalchemy import func, select
 
 from app import config, db, demo, morning
 from app.demo import generate
+from app.lines import resume_lines
+from app.llm import _resolve_lines
 from app.main import create_app
 from app.models import Candidate, Duplicate, Embedding, Match, NightRun, Vacancy
-from app.parse import CandidateProfile, to_parsed
+from app.parse import MAX_CHARS, CandidateProfile, model_input, to_parsed
 
 
 def test_demo_set_imports_as_300_candidates_with_duplicates_and_stale(tmp_path, do_import, session):
@@ -32,6 +35,20 @@ def test_demo_set_imports_as_300_candidates_with_duplicates_and_stale(tmp_path, 
     assert status["open"] >= 3  # то же ФИО, город и дата рождения, контакты разные
     assert count(active, Candidate.stale.is_(True)) == 60  # 20 % старше полутора лет
     assert count(active, Candidate.external_id.is_(None)) == 0  # все файлы связаны со строками
+
+
+FIXTURES = Path(__file__).parent / "fixtures"
+
+
+def whole_lines(c: Candidate, lines: list[int]) -> bool:
+    """Диапазон новой нумерации начинается и кончается на границах строк исходника."""
+    starts, ends, at = set(), set(), 1
+    for line in c.raw_text[:MAX_CHARS].split("\n"):
+        count = resume_lines(line).count("\n") + 1
+        starts.add(at)
+        ends.add(at + count - 1)
+        at += count
+    return lines[0] in starts and lines[1] in ends
 
 
 @pytest.mark.slow
@@ -57,6 +74,19 @@ def test_make_demo_works_without_key(tmp_path, monkeypatch):
         assert v.schedule_enabled
         rows = list(s.scalars(select(Match).where(Match.vacancy_id == v.id)))
         assert len(rows) == 40 and all(m.status == "ok" for m in rows)
+        people = {c.id: c for c in s.scalars(select(Candidate))}
+        # записанные ответы ссылаются на целые строки резюме, а не на кусок строки,
+        # которую поделил resume_lines, — как при записи с живой модели (0.3)
+        for m in rows:
+            for part in (*m.checks, *m.concerns):
+                if part.get("evidence_lines"):
+                    assert whole_lines(people[m.candidate_id], part["evidence_lines"]), m
+        for c in people.values():
+            for pos in (c.parsed or {}).get("positions") or []:
+                if pos.get("source_lines"):
+                    assert whole_lines(c, pos["source_lines"]), (c.external_id, pos)
+        before = json.loads((FIXTURES / "demo_scores_0_3.json").read_text("utf-8"))
+        assert {people[m.candidate_id].external_id: m.score for m in rows} == before
         view = morning.view(s)
     first = view["sections"][0]
     assert first["title"] == "Новые кандидаты по вакансиям"
@@ -92,7 +122,8 @@ def recorded_profiles(tmp_path, do_import, session):
     }
     found = []
     for c in session.scalars(select(Candidate).where(Candidate.duplicate_of.is_(None))):
-        response = answers[f"ID: {c.external_id}\n"]
+        # якоря строк мок превращает в номера по тексту, который ушёл бы модели
+        response = _resolve_lines(answers[f"ID: {c.external_id}\n"], model_input(c))
         found.append((c, to_parsed(CandidateProfile.model_validate(response), c)))
     return found
 

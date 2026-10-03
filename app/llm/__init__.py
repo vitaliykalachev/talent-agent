@@ -259,8 +259,10 @@ class MockLLM(LLM):
 
     Номера строк в записанном ответе можно задать фрагментом: {"__lines__": "текст"}
     превращается в [n, n] по строке пронумерованного запроса «n| …», где он стоит,
-    {"__lines__": ["от", "до"]} — в [n, m]; не нашёлся — null. Так ответ не зависит от
-    того, как импорт разложил резюме по строкам.
+    {"__lines__": ["от", "до"]} — в [n, m], конец ищется не раньше начала;
+    {"__lines__": "текст", "lines": k} — в [n, n + k - 1], когда текст конца повторяется
+    внутри диапазона; не нашёлся — null. Так ответ не зависит от того, как импорт
+    разложил резюме по строкам и как длинные строки поделены на фрагменты.
     """
 
     network_errors = (ConnectionError,)
@@ -307,10 +309,11 @@ class MockLLM(LLM):
         return _resolve_lines(answer, user)
 
 
-def _line_of(fragment: str, user: str) -> int | None:
+def _line_of(fragment: str, user: str, after: int = 1) -> int | None:
+    """Номер первой строки «n| …» не раньше `after`, где стоит фрагмент."""
     needle = " ".join(fragment.lower().split())
     for match in re.finditer(r"^(\d+)\| (.*)$", user, re.MULTILINE):
-        if needle in " ".join(match.group(2).lower().split()):
+        if int(match.group(1)) >= after and needle in " ".join(match.group(2).lower().split()):
             return int(match.group(1))
     return None
 
@@ -323,8 +326,12 @@ def _resolve_lines(answer, user: str):
     if "__lines__" in answer:
         where = answer["__lines__"]
         start, stop = (where, where) if isinstance(where, str) else where
-        found = _line_of(start, user), _line_of(stop, user)
-        return list(found) if None not in found else None
+        first = _line_of(start, user)
+        if first and "lines" in answer:  # конец повторяется внутри диапазона — длиной
+            return [first, first + answer["lines"] - 1]
+        # конец — не раньше начала: та же обязанность бывает и в прошлой работе
+        last = _line_of(stop, user, after=first) if first else None
+        return [first, last] if first and last else None
     return {k: _resolve_lines(v, user) for k, v in answer.items()}
 
 
