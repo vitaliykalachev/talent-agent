@@ -8,6 +8,7 @@ from markupsafe import Markup, escape
 from sqlalchemy import select
 
 from app.anonymize import quote_span
+from app.lines import resume_lines
 from app.models import Candidate, ImportBatch, Job, Vacancy
 
 MONTHS = ["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"]
@@ -238,9 +239,10 @@ def marked_source(c: Candidate, extra: list[tuple[str, list[int]]] = ()) -> tupl
     parsed = c.parsed or {}
     spans = []
     ranges = [(f"q-p{i}", p.get("source_lines")) for i, p in enumerate(parsed.get("positions", []))]
+    numbered_like_model = resume_lines(c.raw_text)  # той же длины, что исходник
     for anchor, lines in [*ranges, *extra]:
         if lines:
-            spans.append((*line_span(c.raw_text, lines), anchor))
+            spans.append((*line_span(numbered_like_model, lines), anchor))
     quote = parsed.get("summary_quote")
     if quote and (span := quote_span(quote, c.raw_text)):
         spans.append((*span, "q-s"))

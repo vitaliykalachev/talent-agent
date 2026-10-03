@@ -28,7 +28,7 @@ from app.anonymize import anonymize, line_range, numbered, valid_lines
 from app.jobs import enqueue, stopping
 from app.llm import AuthError, LLMError, get_llm
 from app.models import Candidate, Feedback, Job, Match, Vacancy
-from app.parse import MAX_CHARS, MIN_CHARS, RELOCATION
+from app.parse import MAX_CHARS, MIN_CHARS, RELOCATION, model_text
 
 MUST_MAX, NICE_MAX, AVOID_MAX = 6, 4, 3
 MANY = 10  # больше требований — предупреждение: список размывает оценку
@@ -392,7 +392,8 @@ SYSTEM_EVAL = """Ты проверяешь резюме кандидата на 
   считается no_data. Не угадывай: нет опоры в тексте — no_data.
 - note — одна короткая фраза, что именно написано в этих строках.
 Для требований «чего точно не надо» verdict = met значит, что это нежелательное в
-резюме есть и видно в указанных строках.
+резюме есть и видно в указанных строках. Если резюме показывает обратное (в требовании
+«только продажи», а человек руководил производством), ставь not_met.
 concerns — два главных сомнения, со строками или с evidence_lines = null, если сомнение в
 том, чего в резюме нет. questions — три вопроса на первый созвон; сначала о том, чего
 нет в резюме. fit_summary — итог в одно-два предложения.
@@ -436,10 +437,6 @@ def _corrections(session: Session, v: Vacancy, c: Candidate) -> list[str]:
         "other": "рекрутер не согласен",
     }
     return [f"«{f.text}» — {labels.get(f.kind, f.kind)}" for f in rows]
-
-
-def model_text(c: Candidate) -> str:
-    return anonymize(c.raw_text[:MAX_CHARS], c.full_name, c.phones, c.emails, c.links)
 
 
 SENTENCE_RE = re.compile(r"(?<=[.!?;])\s+|\n+")
@@ -500,6 +497,21 @@ def _quote(text: str, lines: list[int] | None, limit: int = 240) -> str | None:
     return quote[:limit].rsplit(" ", 1)[0].rstrip(" ,.;:—–-") + "…"
 
 
+ONLY_RE = re.compile(r"\bтольк\w*\s+(?:в\s+|на\s+|с\s+)?([а-яё]{4,})", re.IGNORECASE)
+
+
+def _shows(text: str, lines: list[int], name: str) -> bool:
+    """«Есть» по «чего точно не надо» вида «только в продажах» подтверждает строка, где
+    это видно. Модель бывает отвечает «есть», цитируя как раз обратное («опыт
+    производственный, не только продажи»), — такое «есть» балл не режет."""
+    topic = ONLY_RE.search(name)
+    if not topic:
+        return True
+    stem = topic.group(1)[:5].lower().replace("ё", "е")
+    quoted = "\n".join(text.split("\n")[lines[0] - 1 : lines[1]])
+    return stem in quoted.lower().replace("ё", "е")
+
+
 def checked(evaluation: Evaluation, requirements: list[dict], text: str) -> list[dict]:
     """Вердикты по требованиям вакансии: строки проверены по тексту, который видела модель;
     вердикт без существующих строк → «нет данных»; требование без ответа — тоже."""
@@ -509,6 +521,8 @@ def checked(evaluation: Evaluation, requirements: list[dict], text: str) -> list
         ch = answers.get(r["id"])
         lines = valid_lines(ch.evidence_lines, text) if ch else None
         verdict = ch.verdict if ch and lines else "no_data"
+        if verdict == "met" and r["kind"] == "avoid" and not _shows(text, lines, r["name"]):
+            verdict = "no_data"  # строка не о том нежелательном — «есть» не подтверждено
         out.append(
             {
                 "requirement_id": r["id"],

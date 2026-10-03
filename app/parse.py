@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 from app import config, db
 from app.anonymize import anonymize, numbered, quote_span, valid_lines
 from app.jobs import enqueue, stopping
+from app.lines import resume_lines
 from app.llm import AuthError, LLMError, get_llm
 from app.models import Candidate, Embedding, Job
 
@@ -133,8 +134,10 @@ SYSTEM = """Ты разбираешь резюме кандидата для к�
 
 
 def model_text(c: Candidate) -> str:
-    """Обезличенный текст резюме; строки совпадают со строками `raw_text`."""
-    return anonymize(c.raw_text[:MAX_CHARS], c.full_name, c.phones, c.emails, c.links)
+    """Обезличенный текст резюме для разбора и оценки; строки совпадают со строками
+    `resume_lines(raw_text)` — по ним же подсвечивает «Показать в резюме»."""
+    text = resume_lines(c.raw_text)[:MAX_CHARS]
+    return anonymize(text, c.full_name, c.phones, c.emails, c.links)
 
 
 def model_input(c: Candidate) -> str:
