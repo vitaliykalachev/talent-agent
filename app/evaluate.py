@@ -13,6 +13,7 @@
 
 import hashlib
 import json
+import logging
 import re
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -25,10 +26,12 @@ from sqlalchemy.orm import Session
 
 from app import config, db, search
 from app.anonymize import anonymize, line_range, numbered, valid_lines
-from app.jobs import enqueue, stopping
-from app.llm import AuthError, LLMError, get_llm
+from app.jobs import UNEXPECTED, enqueue, stopping
+from app.llm import AuthError, LLMError, StopError, get_llm
 from app.models import Candidate, Feedback, Job, Match, Vacancy
 from app.parse import MAX_CHARS, MIN_CHARS, RELOCATION, model_text
+
+log = logging.getLogger(__name__)
 
 MUST_MAX, NICE_MAX, AVOID_MAX = 6, 4, 3
 MANY = 10  # больше требований — предупреждение: список размывает оценку
@@ -708,19 +711,21 @@ def run_evaluate(job_id: int) -> None:
                 futures = {ex.submit(_attempt, llm, v, c): (c, r) for c, r in todo[i : i + BATCH]}
                 # Каждый ответ сохраняется, как только пришёл: после сбоя или остановки
                 # оплаченные оценки не пропадают и повторно не отправляются. Отказ ключа
-                # или баланса отменяет запросы, которые ещё не ушли, а ушедшие (до
-                # PARALLEL) оплачены: их ответы дожидаемся, сохраняем и только потом
-                # останавливаем задачу.
+                # или баланса отменяет запросы, которые ещё не ушли; ответ не по делу
+                # (HTML вместо ответа) — нет: остальные запросы пачки, вероятно, пройдут.
+                # Ушедшие (до PARALLEL) оплачены: их ответы дожидаемся, сохраняем и только
+                # потом останавливаем задачу.
                 stop = None
                 for future in as_completed(futures):
                     if future.cancelled():
                         continue
                     c, reason = futures[future]
                     result = future.result()
-                    if isinstance(result, AuthError):
+                    if isinstance(result, StopError):
                         stop = stop or result
-                        for other in futures:
-                            other.cancel()
+                        if isinstance(result, AuthError):  # дальше откажет каждый запрос
+                            for other in futures:
+                                other.cancel()
                         continue
                     if isinstance(result, Exception):
                         errors.append(f"{c.id}: {result}")
@@ -753,5 +758,8 @@ def _attempt(llm, v: Vacancy, c: Candidate):
     try:
         with db.SessionLocal() as s:
             return evaluate_one(llm, s, s.get(Vacancy, v.id), s.get(Candidate, c.id))
-    except LLMError as exc:  # AuthError тоже: задача остановится, дождавшись ушедших запросов
+    except LLMError as exc:  # StopError тоже: задача остановится, дождавшись ушедших запросов
         return exc
+    except Exception:  # хаб ответил не тем (HTML вместо ответа и т. п.): в журнал и стоп
+        log.exception("Оценка кандидата %s упала на ответе сервиса", c.id)
+        return StopError(UNEXPECTED)

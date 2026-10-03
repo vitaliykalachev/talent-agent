@@ -543,6 +543,52 @@ def test_maybe_needs_at_least_half_of_must_requirements():
     assert category_of(below_half) == ev.UNFIT
 
 
+def test_unexpected_reply_stops_after_batch_and_keeps_paid(session, base, mock, monkeypatch):
+    """Повторное ревью PR #3: хаб ответил 200 с HTML на втором из пяти (PARALLEL = 4) —
+    адаптер падает с AttributeError, а не LLMError. Остальные запросы ушли и оплачены:
+    пачка доходит до конца, четыре ответа сохраняются, задача останавливается с общей
+    фразой, а «Повторить» отправляет только одного."""
+    import time
+
+    from app.jobs import UNEXPECTED
+
+    v, p = base
+    text = RESUMES["Громов Илья Сергеевич"]
+    for name in ("Белов Сергей Петрович", "Котов Андрей Ильич"):
+        c = Candidate(full_name=name, raw_text=text.replace("Громов Илья Сергеевич", name))
+        c.parse_status, c.resume_date = "parsed", date(2026, 5, 1)
+        session.add(c)
+        p[name.split()[0]] = c
+    session.commit()
+    order = ev.pool(session, v)
+    second = order[1]
+    extra = [answer(v, p[n], gromov_checks()) for n in ("Белов", "Котов")]
+    mock([*standard(v, p), *extra])
+    broken, answer_slowly = {"on": True}, MockLLM._call
+
+    def html_on_second(self, schema, system, user):
+        if broken["on"] and f"кандидат {second}\n" in user:
+            raise AttributeError("'str' object has no attribute 'usage'")  # HTML вместо ответа
+        time.sleep(1)
+        return answer_slowly(self, schema, system, user)
+
+    monkeypatch.setattr(MockLLM, "_call", html_on_second)
+    job = run(session, v)
+    assert len(order) == 5 and job.status == "failed" and job.error == UNEXPECTED
+    saved = set(session.scalars(select(Match.candidate_id).where(Match.vacancy_id == v.id)))
+    assert saved == set(order) - {second}
+
+    broken["on"] = False
+    sent = len(mock.calls)
+    job.status, job.error = "running", None  # как «Повторить оценку»
+    session.commit()
+    run_pending()
+    resent = mock.calls[sent:]
+    assert len(resent) == 1 and f"кандидат {second}\n" in resent[0]
+    session.expire_all()
+    assert session.get(Job, job.id).status == "done" and len(matches(session, v)) == 5
+
+
 def test_crash_mid_batch_keeps_paid_evaluations(session, base, mock, monkeypatch):
     """Правка ревью этапа 3, №4: сбой на третьем ответе (как SIGKILL) — два оплаченных
     ответа уже сохранены, после перезапуска в модель уходит только третий кандидат."""

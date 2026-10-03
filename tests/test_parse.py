@@ -322,6 +322,39 @@ def test_402_mid_parse_keeps_answers_already_paid(five, session, tmp_path, monke
     assert all(five[n].parse_status == "parsed" for n in names)
 
 
+def test_unexpected_reply_mid_parse_keeps_answers_already_paid(five, session, monkeypatch):
+    """Повторное ревью PR #3: хаб ответил 200 с HTML на одном резюме из пяти
+    (PARALLEL = 4) — адаптер падает с AttributeError. Остальные четыре ответа
+    сохраняются, задача останавливается с общей фразой, повтор отправляет одно резюме."""
+    import time
+
+    from app.jobs import UNEXPECTED
+
+    broken, answer_slowly, paid = {"on": True}, MockLLM._call, []
+
+    def html_on_it(self, schema, system, user):
+        if broken["on"] and "ООО «СКБ Контур»" in user:
+            raise AttributeError("'str' object has no attribute 'usage'")  # HTML вместо ответа
+        time.sleep(1)
+        answer = answer_slowly(self, schema, system, user)
+        paid.append(user)
+        return answer
+
+    monkeypatch.setattr(MockLLM, "_call", html_on_it)
+    job = parse_all(session)
+    assert job.status == "failed" and job.error == UNEXPECTED
+    assert len(paid) == 4 and five["it.txt"].parse_status == "new"
+    assert sum(c.parse_status == "parsed" for c in five.values()) == 4
+
+    broken["on"], paid[:] = False, []
+    job.status, job.error = "running", None  # как «Повторить разбор»
+    session.commit()
+    run_pending()
+    session.expire_all()
+    assert len(paid) == 1 and "ООО «СКБ Контур»" in paid[0]
+    assert all(c.parse_status == "parsed" for c in five.values())
+
+
 def test_empty_balance_stops_job_with_human_message(five, session, tmp_path):
     """На ключе кончились деньги (402): разбор останавливается на первом отказе с
     понятной причиной, а не помечает каждое резюме «проверьте модель и адрес»."""

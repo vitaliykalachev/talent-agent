@@ -6,6 +6,7 @@
 Исправления пользователя (`parsed["edits"]`) повторный разбор не перезаписывает.
 """
 
+import logging
 import math
 import re
 import threading
@@ -20,10 +21,12 @@ from sqlalchemy.orm import Session
 
 from app import config, db
 from app.anonymize import anonymize, numbered, quote_span, valid_lines
-from app.jobs import enqueue, stopping
+from app.jobs import UNEXPECTED, enqueue, stopping
 from app.lines import resume_lines
-from app.llm import AuthError, LLMError, get_llm
+from app.llm import AuthError, LLMError, StopError, get_llm
 from app.models import Candidate, Embedding, Job
+
+log = logging.getLogger(__name__)
 
 BATCH = 20
 PARALLEL = 4
@@ -369,10 +372,13 @@ def estimate(session: Session, ids: list[int]) -> dict:
 def _ask(llm, text: str):
     try:
         return llm.complete_structured(CandidateProfile, SYSTEM, text)
-    except AuthError:
+    except StopError:
         raise
     except LLMError as exc:
         return exc
+    except Exception as exc:  # хаб ответил не тем (HTML вместо ответа и т. п.)
+        log.exception("Разбор резюме упал на ответе сервиса")
+        raise StopError(UNEXPECTED) from exc
 
 
 def _tick(job: Job) -> None:
@@ -411,8 +417,9 @@ def run_parse(job_id: int) -> None:
                 session.commit()
                 # Каждая запись сохраняется, как только пришёл ответ: после сбоя или
                 # остановки разобранные повторно не отправляются. Отказ ключа или баланса
-                # отменяет запросы, которые ещё не ушли, а ушедшие (до PARALLEL) оплачены:
-                # их ответы дожидаемся, сохраняем и только потом останавливаем задачу.
+                # отменяет запросы, которые ещё не ушли; ответ не по делу (HTML вместо
+                # ответа) — нет: остальные запросы пачки, вероятно, пройдут. Ушедшие
+                # оплачены: их ответы дожидаемся, сохраняем и только потом останавливаем.
                 stop = None
                 for future in as_completed(futures):
                     if future.cancelled():
@@ -420,10 +427,11 @@ def run_parse(job_id: int) -> None:
                     c = futures[future]
                     try:
                         result = future.result()
-                    except AuthError as exc:
+                    except StopError as exc:
                         stop = stop or exc
-                        for other in futures:
-                            other.cancel()
+                        if isinstance(exc, AuthError):  # дальше откажет каждый запрос
+                            for other in futures:
+                                other.cancel()
                         continue
                     if isinstance(result, LLMError):
                         c.parse_status, c.parse_error = "failed", str(result)
