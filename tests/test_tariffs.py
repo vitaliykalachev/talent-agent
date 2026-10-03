@@ -5,11 +5,18 @@
 оценку остальных 5 — 0,71 ₽. Экран тогда обещал 3,0–5,5 и 4,9–9,1 ₽.
 """
 
-import pytest
+from pathlib import Path
 
+import pytest
+from fastapi.testclient import TestClient
+
+from app import config, db, parse
 from app import evaluate as ev
-from app import parse
+from app.main import create_app
 from app.models import Candidate, Vacancy
+
+ROOT = Path(__file__).resolve().parent.parent
+PRICES = ("price_parse_in", "price_parse_out", "price_eval_in", "price_eval_out")
 
 LENGTHS = [737, 769, 800, 465, 803, 917, 278, 713, 770, 813]
 FIRST, REST = [1, 0, 3, 2, 5], [4, 6, 7, 8, 9]  # кого оценила первая задача, кого вторая
@@ -54,3 +61,45 @@ def test_evaluate_estimate_brackets_hub_charge(session, measured, who, charged):
     ids, v = measured
     est = ev.estimate(session, v, ev.TRIAL, order=[ids[i] for i in who])
     assert est["count"] == 5 and est["rub_low"] <= charged <= est["rub_high"]
+
+
+def test_old_default_prices_replaced_once_own_kept(tmp_path, caplog):
+    """«Сохранить» в «Настройках» записывает все поля, в том числе цены. У тех, кто
+    нажимал его в 0.3, в базе остались прежние умолчания $1/$5/$2/$10, и новая версия
+    их не меняла бы. При обновлении они один раз заменяются замером, свои — нет."""
+    from alembic import command
+    from alembic.config import Config
+    from sqlalchemy import create_engine, text
+
+    folder = tmp_path / "old"
+    folder.mkdir()
+    cfg = Config(str(ROOT / "alembic.ini"))
+    cfg.set_main_option("script_location", str(ROOT / "migrations"))
+    cfg.set_main_option("sqlalchemy.url", f"sqlite:///{folder / 'app.db'}")
+    command.upgrade(cfg, "0004")  # база версии 0.3
+    saved = {"price_parse_in": "1", "price_parse_out": "5", "price_eval_in": "0,3"}
+    engine = create_engine(f"sqlite:///{folder / 'app.db'}")
+    with engine.begin() as conn:
+        for key, value in {**saved, "price_eval_out": "10"}.items():
+            conn.execute(
+                text("insert into settings (key, value) values (:k, :v)"), {"k": key, "v": value}
+            )
+    engine.dispose()
+
+    db.configure(folder)  # первый старт новой версии
+    assert {key: config.get(key) for key in PRICES} == {
+        "price_parse_in": "0.44",
+        "price_parse_out": "0.44",
+        "price_eval_in": "0,3",  # своё рекрутера
+        "price_eval_out": "0.49",
+    }
+    assert "price_parse_in" in caplog.text and "price_eval_in" not in caplog.text
+    config.save({"price_parse_in": "1"})  # потом сам поставил 1 — это его решение
+    db.configure(folder)
+    assert config.get("price_parse_in") == "1"
+
+
+def test_settings_say_where_prices_come_from(session):
+    page = TestClient(create_app()).get("/settings").text
+    assert "По списаниям ClaudeHub на 03.10.2026, можно поправить" in page
+    assert "Как в прайсе сервиса" not in page

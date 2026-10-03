@@ -242,7 +242,7 @@ def test_old_base_upgraded_on_start(tmp_path):
     with TestClient(main.create_app(folder)) as c:
         assert c.get("/settings").status_code == 200
     with create_engine(f"sqlite:///{folder / 'app.db'}").connect() as conn:
-        assert conn.scalar(text("select version_num from alembic_version")) == "0004"
+        assert conn.scalar(text("select version_num from alembic_version")) == "0005"
 
 
 def test_clear_resets_word_index(session, do_import):
