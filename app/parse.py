@@ -58,7 +58,7 @@ RELOCATION = {
 
 
 class Position(BaseModel):
-    title: str = Field(description="Должность")
+    title: str = Field(description="Должность, без названия компании")
     company: str | None = Field(None, description="Компания")
     industry: str | None = Field(None, description="Отрасль компании")
     start: str | None = Field(None, description="Начало: ГГГГ-ММ или ГГГГ")
@@ -122,7 +122,8 @@ SYSTEM = """Ты разбираешь резюме кандидата для к�
 Правила:
 - Бери только то, что написано в резюме. Не выдумывай: нет данных — null или пустой список.
 - desired_position — желаемая должность, если она названа.
-- Места работы — от новых к старым. Даты — ГГГГ-ММ или ГГГГ.
+- Места работы — от новых к старым. Даты — ГГГГ-ММ или ГГГГ. title — только должность,
+  без названия компании: компания — в поле company.
 - Если работа идёт сейчас («по н.в.», «по н/в», «по настоящее время», «наст. время»,
   «сейчас», «по сей день», «до сих пор»), ставь is_current = true и end = null.
 - total_years — общий стаж в годах, как он указан в резюме; не указан — null.
@@ -227,6 +228,16 @@ def grounded(summary: str, text: str) -> str:
     return " ".join(kept)
 
 
+def without_company(title: str, company: str | None) -> str:
+    """Должность без названия компании: в резюме одной строкой модель их склеивала
+    («директор по производству АО «ОДК-Кузнецов»»). Только компания — как есть."""
+    at = (title or "").lower().find((company or "").lower()) if company else -1
+    if at < 0:
+        return title
+    rest = " ".join((title[:at] + title[at + len(company) :]).split()).strip(" ,—–-:;")
+    return rest or title
+
+
 def to_parsed(profile: CandidateProfile, c: Candidate, seen: str | None = None) -> dict:
     """Результат модели + проверки кода + прежние правки пользователя.
 
@@ -240,6 +251,7 @@ def to_parsed(profile: CandidateProfile, c: Candidate, seen: str | None = None) 
     said = next((value for pattern, value in RELOCATION_SAID if pattern.search(seen)), None)
     data["relocation"] = said or data["relocation"]
     for pos in data["positions"]:
+        pos["title"] = without_company(pos["title"], pos["company"])
         pos["source_lines"] = valid_lines(pos["source_lines"], seen)
         pos["lines_ok"] = pos["source_lines"] is not None
         pos["company_key"] = company_key(pos["company"])

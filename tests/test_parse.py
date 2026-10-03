@@ -212,6 +212,26 @@ def test_relocation_phrases_win_over_model_guess(phrase, expected):
     assert to_parsed(profile, c, seen=text)["relocation"] == expected
 
 
+def test_company_not_part_of_position_title():
+    """Живой прогон 03.10.2026: в резюме одной строкой модель склеила должность с
+    компанией, и таблица разбора показала «директор по производству АО «ОДК-Кузнецов»,
+    АО «ОДК-Кузнецов»»."""
+    from app.parse import CandidateProfile, Position, to_parsed
+
+    text = "директор по производству АО «ОДК-Кузнецов» стаж 19 лет"
+    profile = CandidateProfile(
+        positions=[
+            Position(
+                title="директор по производству АО «ОДК-Кузнецов»", company="АО «ОДК-Кузнецов»"
+            ),
+            Position(title="Магнит", company="Магнит"),  # только компания — оставляем как есть
+        ]
+    )
+    c = Candidate(raw_text=text, full_name=None, phones=[], emails=[], links=[])
+    titles = [p["title"] for p in to_parsed(profile, c, seen=text)["positions"]]
+    assert titles == ["директор по производству", "Магнит"]
+
+
 def test_company_key_strips_forms_and_quotes():
     assert company_key("ООО «Ромашка»") == company_key("ромашка") == "ромашка"
     assert company_key('ПАО "Северсталь"') == "северсталь"
