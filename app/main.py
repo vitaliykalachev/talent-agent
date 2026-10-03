@@ -21,7 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from app import db, embed, jobs, schedule
 from app.web.duplicates import router as duplicates_router
 from app.web.morning import router as morning_router
-from app.web.routes import router
+from app.web.routes import foreign, router
 from app.web.vacancies import router as vacancies_router
 
 STATIC = Path(__file__).parent / "static"
@@ -47,6 +47,15 @@ def create_app(data_dir: Path | str | None = None) -> FastAPI:
             await warm
 
     app = FastAPI(title="Кадровый агент", lifespan=lifespan)
+
+    @app.middleware("http")
+    async def own_pages_only(request, call_next):
+        """Всё, что меняет данные или тратит деньги (POST, PUT, DELETE), — только со
+        страниц программы: чужой сайт в том же браузере получает 403 (routes.foreign)."""
+        if request.method not in ("GET", "HEAD", "OPTIONS") and (refused := foreign(request)):
+            return refused
+        return await call_next(request)
+
     # id больше, чем помещается в базу (/candidates/<23 цифры>), — такой записи нет
     app.add_exception_handler(
         OverflowError, lambda _r, _e: PlainTextResponse("Такой записи нет.", status_code=404)

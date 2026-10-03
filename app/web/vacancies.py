@@ -14,7 +14,7 @@ from app import evaluate as ev
 from app.llm import DEMO_MISS, AuthError, LLMError
 from app.models import Candidate, Feedback, Job, Match, Vacancy
 from app.web import present
-from app.web.routes import foreign, render, templates
+from app.web.routes import render, templates
 
 router = APIRouter()
 
@@ -281,8 +281,6 @@ async def conditions_save(request: Request, vacancy_id: int):
 
 @router.post("/vacancies/{vacancy_id}/evaluate")
 async def evaluate_start(request: Request, vacancy_id: int):
-    if refused := foreign(request):  # тратит деньги — только со страниц программы
-        return refused
     form = await request.form()
     ids = [int(i) for i in form.getlist("ids") if str(i).isdigit()] or None
     with db.SessionLocal() as s:

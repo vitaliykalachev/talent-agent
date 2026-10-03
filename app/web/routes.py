@@ -423,8 +423,6 @@ def parse_confirm(request: Request, scope: str = "trial", job: int | None = None
 
 @router.post("/parse")
 async def parse_start(request: Request):
-    if refused := foreign(request):  # тратит деньги — только со страниц программы
-        return refused
     form = await request.form()
     scope = str(form.get("scope", "trial"))
     job_id = int(form["job"]) if form.get("job") else None
@@ -501,12 +499,10 @@ def job_resume(job_id: int):
 
 
 @router.post("/jobs/{job_id}/retry")
-def job_retry(request: Request, job_id: int):
+def job_retry(job_id: int):
     """«Повторить оценку» и «Повторить разбор»: задача, которую остановил ключ, баланс или
     сбой, продолжает с того места, где встала, как прерванная перезапуском. Сделанное
     заново не отправляется, оценка остаётся той же (время начала не сдвигается)."""
-    if refused := foreign(request):  # тратит деньги — только со страниц программы
-        return refused
     with db.SessionLocal() as s:
         job = s.get(Job, job_id)
         if not job:
@@ -940,16 +936,27 @@ async def settings_check(request: Request):
 
 
 FOREIGN = "Запрос пришёл не из программы."
+LOCAL_HOSTS = {"127.0.0.1", "localhost", "[::1]"}  # программа слушает только этот компьютер
 
 
 def foreign(request: Request) -> PlainTextResponse | None:
-    """Необратимые кнопки («Удалить ключ», очистка базы) — только со своих страниц: чужой
-    сайт в том же браузере мог бы прислать форму на 127.0.0.1. Браузер помечает такой
-    запрос заголовками Sec-Fetch-Site и Origin; без них (curl, тесты) запрос свой."""
+    """Всё, что меняет данные или тратит деньги, — только со своих страниц (проверяет
+    промежуточный слой в app/main.py для любого POST, PUT и DELETE). Чужой сайт в том же
+    браузере мог бы прислать форму на 127.0.0.1 — например, «Проверить подключение» со
+    своим адресом сервиса, и сохранённый ключ ушёл бы к нему. Браузер помечает такой
+    запрос заголовками Sec-Fetch-Site и Origin; без них (curl, тесты) запрос свой. Host —
+    только имена этого компьютера: чужой домен, указывающий на 127.0.0.1 (DNS-rebinding),
+    не пройдёт."""
     site = request.headers.get("sec-fetch-site")
     origin = request.headers.get("origin")
-    ours = f"{request.url.scheme}://{request.headers.get('host', '')}"
-    if site not in (None, "same-origin", "none") or origin not in (None, ours):
+    host = request.headers.get("host", "")
+    name = host.split("]")[0] + "]" if host.startswith("[") else host.rsplit(":", 1)[0]
+    ours = f"{request.url.scheme}://{host}"
+    if (
+        site not in (None, "same-origin", "none")
+        or origin not in (None, ours)
+        or name.lower() not in LOCAL_HOSTS
+    ):
         return PlainTextResponse(FOREIGN, status_code=403)
     return None
 
@@ -957,8 +964,6 @@ def foreign(request: Request) -> PlainTextResponse | None:
 @router.post("/settings/key-delete", response_class=HTMLResponse)
 def settings_key_delete(request: Request):
     """«Удалить ключ»: пустое поле ключ не стирает, поэтому отдельная кнопка."""
-    if refused := foreign(request):
-        return refused
     config.save({"llm_api_key": ""})
     if config.has_recorded():  # демо: без ключа — обратно на записанные ответы
         config.save({"llm_provider": "mock"})
@@ -984,8 +989,6 @@ async def settings_mail_test(request: Request):
 async def settings_clear(request: Request):
     """Очистка базы в два шага: первый показывает подтверждение, второй («Да, удалить»,
     поле confirm) удаляет данные. Настройки и ключ остаются."""
-    if refused := foreign(request):
-        return refused
     form = await request.form()
     if form.get("confirm") != "1":
         return _settings_page(request, confirm_clear=True)
