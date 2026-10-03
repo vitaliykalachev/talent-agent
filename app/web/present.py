@@ -247,7 +247,8 @@ def marked_source(c: Candidate, extra: list[tuple[str, list[int]]] = ()) -> tupl
     if quote and (span := quote_span(quote, c.raw_text)):
         spans.append((*span, "q-s"))
     spans += field_spans(c.raw_text, parsed)
-    spans.sort()
+    # с одного места — сначала довод оценки: на него ведёт «Показать в резюме»
+    spans.sort(key=lambda span: (span[0], not span[2].startswith("e-"), span[1]))
     out, pos, anchors = [], 0, set()
     for start, stop, anchor in spans:
         if start < pos:

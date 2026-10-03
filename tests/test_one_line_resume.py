@@ -141,6 +141,16 @@ def test_avoid_met_without_line_does_not_cap(session, director, vacancy, mock): 
     assert m.score == 100 and ev.category(m) == ev.FIT
 
 
+def test_show_in_resume_wins_over_summary_quote_on_same_fragment(director):
+    """Живая перепроверка: цитата «Кратко» начиналась с того же фрагмента, что довод
+    оценки, и забирала подсветку — «Показать в резюме» вела в никуда."""
+    director.parsed = {"summary_quote": "директор по производству АО «ОДК-Кузнецов» стаж 19 лет"}
+    numbered = model_text(director).split("\n")
+    n = next(i for i, line in enumerate(numbered, 1) if line.startswith("директор по"))
+    html, anchors = marked_source(director, [("e-r1", [n, n])])
+    assert "e-r1" in anchors and '<mark id="e-r1">директор по производству' in html
+
+
 def test_show_in_resume_marks_same_fragment(director):
     """«Показать в резюме» подсвечивает тот фрагмент, на который сослалась модель."""
     numbered = model_text(director).split("\n")
