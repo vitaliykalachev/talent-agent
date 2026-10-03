@@ -20,6 +20,10 @@ BANNER = f"Демо-режим: данные вымышленные. {DEMO_MISS}
 PAGES = ("/", "/vacancies", "/vacancies/1", "/duplicates", "/morning", "/settings")
 SHOWCASE = ("/", "/morning", "/vacancies", "/vacancies/1/results")
 FAILURES = ("не получилось", "не удалось оценить", "есть проблемы")
+# Карточка новой вакансии открывается сразу, а модель поиска догружается в фоне: пока
+# на карточке эта строка, кандидатов на ней ещё нет (холодный старт, PR #3)
+WARMING = "Поиск по смыслу ещё загружается"
+WARMING_LIMIT = 180  # секунд: столько ждём, пока карточка покажет найденных кандидатов
 
 
 def get(url: str, data: dict | None = None) -> tuple[int, str, str]:
@@ -67,8 +71,12 @@ def main() -> None:
     # Тот же текст демо, но не повтор: повтор за минуту ведёт на готовую вакансию
     own = description(pkg) + " Вакансия для проверки сборки."
     _, url, text = get(base + "/vacancies/new", {"description": own})
-    first_search = time.monotonic() - started_search
     assert re.search(r"/vacancies/\d+$", url) and url != base + "/vacancies/1", url
+    while WARMING in text and time.monotonic() - started_search < WARMING_LIMIT:
+        time.sleep(1)  # как клиент: карточка сама обновится, когда модель загрузится
+        text = get(url)[2]
+    first_search = time.monotonic() - started_search
+    assert WARMING not in text, f"модель поиска не загрузилась за {WARMING_LIMIT} с"
     counts = [int(n) for n in re.findall(r"<small>(\d+) кандидат", text)]
     assert counts and max(counts) > 0, "по демо-вакансии кандидаты не нашлись"
     text = get(base + "/candidates?" + urllib.parse.urlencode({"q": "литейное производство"}))[2]
